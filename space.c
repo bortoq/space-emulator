@@ -48,9 +48,11 @@ int main(int argc, char **argv)
 
   init_space();
 
-  /* emulate computation (такт до конца и при halted) */
+  /* emulate computation (такт до конца и при halted;
+     останов, если процессор заполнен NOPами) */
   while(!halted && (limit == 0 || time--))
-    computation();
+    if(!computation())
+      break;
 
   fflush(stdout);
   return 0;

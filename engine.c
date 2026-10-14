@@ -151,15 +151,24 @@ void run_instruction(size i)
 }
 
 /* one tick: first read all instructions, then execute all copies.
+   возврат 1 если была хоть одна не-NOP инструкция, иначе 0 (не исполняем).
    такт исполняется до конца и при halted; канальные обращения идут
    в порядке инструкций, так как stdin/stdout последовательны */
-void computation(void)
+int computation(void)
 {
   size i;
+  int alive = 0;
   for(i = 0; i < PROCESSOR_N; ++i)
+  {
     fetch_instruction(i);
+    if(processor[i][0])
+      alive = 1;
+  }
+  if(!alive)
+    return 0;
   for(i = 0; i < PROCESSOR_N; ++i)
     run_instruction(i);
+  return 1;
 }
 
 /* write the single boot instruction bit string */

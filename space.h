@@ -62,7 +62,7 @@ extern int halted;               /* 1 после конца ввода/ошиб�
 extern FILE *channel_in;         /* поток ввода (по умолчанию stdin) */
 extern FILE *channel_out;        /* поток вывода (по умолчанию stdout) */
 void run_instruction(size i);    /* исполнить i-ю инструкцию (копия или канал) */
-void computation(void);          /* один такт: все инструкции подряд */
+int computation(void);           /* такт: 1 если исполнен (был живой), 0 если все NOP */
 void init_space(void);           /* начальная инструкция, таблица, каналы */
 int space_input(size n_bits, size addr_bits, FILE *f);  /* f -> space, 0 ok */
 int space_output(size n_bits, size addr_bits, FILE *f); /* space -> f, 0 ok */
