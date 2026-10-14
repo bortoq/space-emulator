@@ -153,20 +153,20 @@ void run_instruction(size i)
 }
 
 /* one tick: first read all instructions, then execute all copies.
-   возврат 1 если была хоть одна не-NOP инструкция, иначе 0 (не исполняем).
+   возврат состояния такта: 1 если исполнен (есть не-NOP), иначе 0.
    такт исполняется до конца и при halted; канальные обращения идут
    в порядке инструкций, так как stdin/stdout последовательны */
 int computation(void)
 {
   size i;
-  int alive = 0;
+  int state = 0;
   for(i = 0; (size_t)i < proc_n; ++i)
   {
     fetch_instruction(i);
     if(processor[i][0])
-      alive = 1;
+      state = 1;
   }
-  if(!alive)
+  if(!state)
     return 0;
   for(i = 0; (size_t)i < proc_n; ++i)
     run_instruction(i);

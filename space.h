@@ -35,9 +35,11 @@ enum {
 };
 
 /* limits (проверяются при запуске):
-   space_nbits % INSTRUCTION_SIZE == 0 (отсюда и кратность 8),
+   space_nbits % CHAR_BIT == 0 (массивы побайтовые, точные),
    space_nbits <= SPACE_BITS_MAX (позиции адресуются 16 битами),
-   proc_n >= 1, proc_n * INSTRUCTION_SIZE <= space_nbits (образ влезает).
+   proc_n >= 1, space_nbits >= proc_n * INSTRUCTION_SIZE + 8
+   (образ процессора плюс байт состояния канала вне его).
+   Делением без переполнения: proc_n <= (space_nbits - 8) / INSTRUCTION_SIZE.
    Отсюда proc_n <= 1365 < 65535: индекса `size` достаточно везде. */
 
 /* types */
@@ -66,7 +68,8 @@ extern int halted;               /* 1 после конца ввода/ошиб�
 extern FILE *channel_in;         /* поток ввода (по умолчанию stdin) */
 extern FILE *channel_out;        /* поток вывода (по умолчанию stdout) */
 void run_instruction(size i);    /* исполнить прочитанную i-ю инструкцию */
-int computation(void);           /* такт: 1 если исполнен (был живой), 0 если все NOP */
+int computation(void);           /* такт: состояние 1 если исполнен, 0 если все NOP */
+void parse_config(int argc, char **argv); /* флаги -s/-p/-t, проверка пределов */
 void init_space(void);           /* выделение, начальная инструкция, каналы */
 int space_input(size n_bits, size addr_bits, FILE *f);  /* f -> space, 0 ok */
 int space_output(size n_bits, size addr_bits, FILE *f); /* space -> f, 0 ok */

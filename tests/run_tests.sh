@@ -6,7 +6,7 @@ CC="${CC:-gcc}"
 CFLAGS="-std=c11 -Wall -Wextra -O2"
 
 echo "== сборка =="
-$CC $CFLAGS -o space space.c engine.c globals.c bitcopy.c
+$CC $CFLAGS -o space space.c engine.c config.c globals.c bitcopy.c
 
 echo "== загрузка и исполнение =="
 ./tests/boot.sh
