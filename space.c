@@ -26,6 +26,7 @@ int main(int argc, char **argv)
     if(!computation())
       break;
 
+  channel_flush();
   fflush(stdout);
   free(space);
   free(processor);

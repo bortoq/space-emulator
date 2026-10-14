@@ -2,16 +2,20 @@
  * ADDRESS SPACE ENGINE (single channel version)
  *
  * Each tick has two phases: first read all
- * "copy n, dst, src" instructions from the special positions,
+ * "copy n, dst, src" instructions from the processor positions,
  * then execute all copies over the bit space.
  * An instruction whose source half-interval starts at the last
  * position of the space is input (stdin -> space),
  * one whose destination half-interval starts there is
  * output (space -> stdout); the rest are
- * ordinary internal copies. Writes to special positions
- * (including the load) take effect from the next tick; position order
- * inside phases does not matter. Half-interval non-overlap
- * is never checked: the program guarantees it, the emulator relies on it.
+ * ordinary internal copies. Channel access transfers any number
+ * of bits at any bit position; stream bits continue across
+ * accesses (one stream byte holds 8 bits, first bit is the high
+ * one). A short transfer places what is available and never stops.
+ * Writes to processor positions (including the load) take effect
+ * from the next tick; position order inside phases does not matter.
+ * Half-interval non-overlap is never checked: the program
+ * guarantees it, the emulator relies on it.
  */
 #include "space.h"
 #ifdef SIGPIPE
@@ -21,14 +25,49 @@
 FILE *channel_in = NULL;
 FILE *channel_out = NULL;
 
-/* return bit string of instruction argument as a number */
+/* stream bit cursors: unread bits of the current input byte and
+   bits already collected into the current output byte */
+static unsigned char in_byte;
+static int in_left;
+static unsigned char out_byte;
+static int out_used;
+
+/* test one space bit (bit 0 of a byte is the high bit) */
+static inline int space_bit(size_t p)
+{
+  return (space[p / CHAR_BIT] >> (CHAR_BIT - 1 - p % CHAR_BIT)) & 1;
+}
+
+/* set one space bit (bit 0 of a byte is the high bit) */
+static inline void space_set_bit(size_t p, int v)
+{
+  unsigned char *b = space + p / CHAR_BIT;
+  unsigned char m = (unsigned char)(1 << (CHAR_BIT - 1 - p % CHAR_BIT));
+  if(v)
+    *b = (unsigned char)(*b | m);
+  else
+    *b = (unsigned char)(*b & ~m);
+}
+
+/* return instruction argument: value bit k at position src + k */
 static inline size get_argument(size src, size n)
 {
   size v = 0;
+  size k;
   if(n > sizeof v * CHAR_BIT)
     n = sizeof v * CHAR_BIT;
-  bitcpy(n, space, src, &v, 0);
+  for(k = 0; k < n; ++k)
+    if(space_bit(src + k))
+      v = (size)(v | (size)1 << k);
   return v;
+}
+
+/* write instruction argument: value bit k at position at + k */
+static inline void store_argument(size n, size value, size at)
+{
+  size k;
+  for(k = 0; k < n; ++k)
+    space_set_bit(at + k, (value >> k) & 1);
 }
 
 /* read "i-th instruction" bit string from bit space to the processor mechanism */
@@ -38,17 +77,17 @@ static inline void fetch_instruction(size i)
   if((size_t)i >= proc_n)
     return;
   for(a = 0; a < N_FIELDS; ++a)
-    processor[i][a] = get_argument(PROCESSOR_START + i * INSTRUCTION_SIZE + o[a], s[a]);
+    processor[i][a] = get_argument(PROCESSOR_START + i * instruction_size + o[a], s[a]);
 }
 
-/* write parsed instruction bit string to special positions (init) */
+/* write parsed instruction bit string to processor positions (init) */
 static inline void store_instruction(size i, size n, size dst, size src)
 {
   if((size_t)i >= proc_n)
     return;
-  bitcpy(s[0], &n, 0, space, INSTRUCTION_SIZE * i + o[0]);
-  bitcpy(s[1], &dst, 0, space, INSTRUCTION_SIZE * i + o[1]);
-  bitcpy(s[2], &src, 0, space, INSTRUCTION_SIZE * i + o[2]);
+  store_argument(s[0], n, instruction_size * i + o[0]);
+  store_argument(s[1], dst, instruction_size * i + o[1]);
+  store_argument(s[2], src, instruction_size * i + o[2]);
 }
 
 /* check instruction half-intervals before copy */
@@ -70,85 +109,112 @@ static inline void init_channels(void)
     channel_in = stdin;
   if(channel_out == NULL)
     channel_out = stdout;
+  in_byte = 0;
+  in_left = 0;
+  out_byte = 0;
+  out_used = 0;
 }
 
 /* copy n_bits from f to the half-interval [addr_bits, addr_bits + n_bits).
+   any n_bits and addr_bits; stream bits continue across accesses.
    return 0 if full, -1 if skipped or short (end/failure seen via query) */
 int space_input(size n_bits, size addr_bits, FILE *f)
 {
-  size_t n_bytes;
-  size_t done;
   if(f == NULL)
     return -1;
   if(n_bits == 0)
     return 0;
-  if(n_bits % CHAR_BIT != 0)
-    return -1;
-  if(addr_bits % CHAR_BIT != 0)
-    return -1;
-  n_bytes = (size_t)n_bits / CHAR_BIT;
   if((size_t)addr_bits + (size_t)n_bits > space_nbits)
     return -1;
-  done = fread(&space[addr_bits / CHAR_BIT], 1, n_bytes, f);
-  if(done != n_bytes)
-    return -1;
+  while(n_bits)
+  {
+    size take;
+    if(in_left == 0)
+    {
+      if(fread(&in_byte, 1, 1, f) != 1)
+        return -1;
+      in_left = CHAR_BIT;
+    }
+    take = (size)in_left < n_bits ? (size)in_left : n_bits;
+    bitcpy(take, &in_byte, CHAR_BIT - in_left, space, addr_bits);
+    in_left -= (int)take;
+    n_bits -= take;
+    addr_bits = (size)(addr_bits + take);
+  }
   return 0;
 }
 
 /* copy n_bits from the half-interval [addr_bits, addr_bits + n_bits) to f.
-   return 0 if full, -1 if skipped or short (end/failure seen via query) */
+   any n_bits and addr_bits; bits stay collected until a byte is full.
+   return 0 if full, -1 if skipped or failed */
 int space_output(size n_bits, size addr_bits, FILE *f)
 {
-  size_t n_bytes;
-  size_t done;
   if(f == NULL)
     return -1;
   if(n_bits == 0)
     return 0;
-  if(n_bits % CHAR_BIT != 0)
-    return -1;
-  if(addr_bits % CHAR_BIT != 0)
-    return -1;
-  n_bytes = (size_t)n_bits / CHAR_BIT;
   if((size_t)addr_bits + (size_t)n_bits > space_nbits)
     return -1;
-  done = fwrite(&space[addr_bits / CHAR_BIT], 1, n_bytes, f);
-  if(done != n_bytes)
-    return -1;
+  while(n_bits)
+  {
+    size take;
+    take = (size)(CHAR_BIT - out_used) < n_bits ? (size)(CHAR_BIT - out_used) : n_bits;
+    bitcpy(take, space, addr_bits, &out_byte, out_used);
+    out_used += (int)take;
+    n_bits -= take;
+    addr_bits = (size)(addr_bits + take);
+    if(out_used == CHAR_BIT)
+    {
+      int ok = fwrite(&out_byte, 1, 1, f) == 1;
+      out_used = 0;
+      if(!ok)
+        return -1;
+    }
+  }
   return 0;
 }
 
-/* state byte of the read side: bit 0 means end of input seen,
-   bit 1 means input failure (sticky stdio flags, query never clears them) */
+/* write collected output bits (zero padded) at program end */
+void channel_flush(void)
+{
+  if(out_used && channel_out != NULL)
+  {
+    fwrite(&out_byte, 1, 1, channel_out);
+    out_used = 0;
+  }
+}
+
+/* state byte of the read side: end of input seen, input failure
+   (sticky stdio flags, query never clears them) */
 static unsigned char input_state(void)
 {
   unsigned char st = 0;
   if(channel_in != NULL)
   {
     if(feof(channel_in))
-      st |= 0x01;
+      st |= STATE_END;
     if(ferror(channel_in))
-      st |= 0x02;
+      st |= STATE_IN_FAIL;
   }
   return st;
 }
 
-/* state byte of the write side: bit 0 means output failure */
+/* state byte of the write side: output failure */
 static unsigned char output_state(void)
 {
   unsigned char st = 0;
   if(channel_out != NULL && ferror(channel_out))
-    st |= 0x01;
+    st |= STATE_OUT_FAIL;
   return st;
 }
 
-/* query target (8 bits) must fit and lie outside the processor.
+/* query target (STATE_BITS) must fit and lie outside the processor.
    alignment is not required: bitcpy writes it */
 static inline int query_ok(size addr_bits)
 {
-  if((size_t)addr_bits + 8 > space_nbits)
+  if((size_t)addr_bits + STATE_BITS > space_nbits)
     return 0;
-  if((size_t)addr_bits < proc_n * INSTRUCTION_SIZE)
+  if((size_t)addr_bits < proc_n * instruction_size)
     return 0;
   return 1;
 }
@@ -170,13 +236,13 @@ void run_instruction(size i)
     if(src == last && dst != last && query_ok(dst))
     {
       unsigned char st = input_state();
-      bitcpy(8, &st, 0, space, dst);
+      bitcpy(STATE_BITS, &st, 0, space, dst);
       return;
     }
     if(dst == last && src != last && query_ok(src))
     {
       unsigned char st = output_state();
-      bitcpy(8, &st, 0, space, src);
+      bitcpy(STATE_BITS, &st, 0, space, src);
       return;
     }
     return;
@@ -233,11 +299,11 @@ void init_space(void)
   if(space == NULL || processor == NULL)
   {
     fprintf(stderr, "space: out of memory\n");
-    exit(1);
+    exit(EXIT_MEMORY);
   }
   memset(space, 0, (space_nbits + CHAR_BIT - 1) / CHAR_BIT);
   memset(processor, 0, proc_n * sizeof *processor);
-  boot_n = (size)(proc_n * INSTRUCTION_SIZE);
+  boot_n = (size)(proc_n * instruction_size);
   boot_last = (size)(space_nbits - 1);
   processor[0][0] = boot_n;
   processor[0][1] = PROCESSOR_START;

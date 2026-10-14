@@ -17,6 +17,9 @@ echo "== NOP stop =="
 echo "== state queries =="
 ./tests/state.sh
 
+echo "== channel bit transfers =="
+./tests/channels.sh
+
 echo "== sizes and flags =="
 ./tests/cfg.sh
 

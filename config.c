@@ -1,17 +1,18 @@
 /*
  * COMMAND LINE CONFIGURATION
  *
- * Parse flags -s/-p/-t into globals.c; check version limits.
+ * Parse flags -s/-p/-t into globals.c; derive instruction field widths
+ * from the space size; check version limits.
  * Usage: space [-s bits] [-p num] [-t ticks] < user_space > result.
  */
 #include "space.h"
 #include <errno.h>
 
-/* usage and exit 2 */
+/* usage and exit */
 static void usage(void)
 {
   fprintf(stderr, "usage: space [-s bits] [-p num] [-t ticks]\n");
-  exit(2);
+  exit(EXIT_USAGE);
 }
 
 /* decimal integer; error means usage */
@@ -39,7 +40,26 @@ static const char *flag_value(int *i, int argc, char **argv, const char *arg)
   return argv[*i];
 }
 
-/* flags into globals.c; check version limits */
+/* field widths from the space size: address bits = ceil(log2 space bits),
+   count field one bit less, instruction = 2*address + count */
+static void compute_format(void)
+{
+  size_t v;
+  size a = 0;
+  for(v = space_nbits - 1; v; v >>= 1)
+    ++a;
+  address_bits = a;
+  nfield_bits = (size)(a - 1);
+  instruction_size = (size)(2 * a + (a - 1));
+  o[0] = 0;
+  s[0] = nfield_bits;
+  o[1] = nfield_bits;
+  s[1] = address_bits;
+  o[2] = (size)(nfield_bits + address_bits);
+  s[2] = address_bits;
+}
+
+/* flags into globals.c; derive format; check version limits */
 void parse_config(int argc, char **argv)
 {
   int i;
@@ -61,14 +81,20 @@ void parse_config(int argc, char **argv)
     fprintf(stderr, "space: need at least 1 instruction (-p)\n");
     usage();
   }
-  if(space_nbits < 1 || space_nbits > (1ULL << ADDRESS_SIZE))
+  if(space_nbits < 8 || space_nbits > SPACE_BITS_MAX)
   {
-    fprintf(stderr, "space: bits must be 1..%llu (-s)\n", 1ULL << ADDRESS_SIZE);
+    fprintf(stderr, "space: bits must be 8..%u (-s)\n", (unsigned)SPACE_BITS_MAX);
     usage();
   }
-  if(space_nbits < 8 || proc_n > (space_nbits - 8) / INSTRUCTION_SIZE)
+  compute_format();
+  if(proc_n > (space_nbits - 8) / instruction_size)
   {
-    fprintf(stderr, "space: need processor image plus state byte outside it (-s/-p)\n");
+    fprintf(stderr, "space: need processor instructions plus state byte outside them (-s/-p)\n");
+    usage();
+  }
+  if(proc_n * (size_t)instruction_size > ((size_t)1 << nfield_bits) - 1)
+  {
+    fprintf(stderr, "space: boot count does not fit the n field (-s/-p)\n");
     usage();
   }
 }
