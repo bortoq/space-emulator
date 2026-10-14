@@ -12,6 +12,8 @@
  * of bits at any bit position; stream bits continue across
  * accesses (one stream byte holds 8 bits, first bit is the high
  * one). A short transfer places what is available and never stops.
+ * A query writes the state and the count of the last transfer
+ * of that direction.
  * Writes to processor positions (including the load) take effect
  * from the next tick; position order inside phases does not matter.
  * Half-interval non-overlap is never checked: the program
@@ -31,6 +33,8 @@ static unsigned char in_byte;
 static int in_left;
 static unsigned char out_byte;
 static int out_used;
+static size in_copied;   /* bits moved by the last input */
+static size out_copied;  /* bits moved by the last output */
 
 /* test one space bit (bit 0 of a byte is the high bit) */
 static inline int space_bit(size_t p)
@@ -68,6 +72,22 @@ static inline void store_argument(size n, size value, size at)
   size k;
   for(k = 0; k < n; ++k)
     space_set_bit(at + k, (value >> k) & 1);
+}
+
+/* write the transfer count as bytes after the state
+   (low byte of the value first, bit 0 of a byte is the high bit) */
+static inline void store_count(size at, size value)
+{
+  size b = 0;
+  size total = (size)(nfield_bits + CHAR_BIT - 1) / CHAR_BIT;
+  while(b < total)
+  {
+    unsigned char byte = (unsigned char)((value >> (b * CHAR_BIT)) & 0xFF);
+    size left = (size)(nfield_bits - b * CHAR_BIT);
+    size w = left < CHAR_BIT ? left : (size)CHAR_BIT;
+    bitcpy(w, &byte, 0, space, (size)(at + b * CHAR_BIT));
+    ++b;
+  }
 }
 
 /* read "i-th instruction" bit string from bit space to the processor mechanism */
@@ -113,6 +133,8 @@ static inline void init_channels(void)
   in_left = 0;
   out_byte = 0;
   out_used = 0;
+  in_copied = 0;
+  out_copied = 0;
 }
 
 /* copy n_bits from f to the half-interval [addr_bits, addr_bits + n_bits).
@@ -120,6 +142,7 @@ static inline void init_channels(void)
    return 0 if full, -1 if skipped or short (end/failure seen via query) */
 int space_input(size n_bits, size addr_bits, FILE *f)
 {
+  in_copied = 0;
   if(f == NULL)
     return -1;
   if(n_bits == 0)
@@ -140,6 +163,7 @@ int space_input(size n_bits, size addr_bits, FILE *f)
     in_left -= (int)take;
     n_bits -= take;
     addr_bits = (size)(addr_bits + take);
+    in_copied = (size)(in_copied + take);
   }
   return 0;
 }
@@ -149,6 +173,7 @@ int space_input(size n_bits, size addr_bits, FILE *f)
    return 0 if full, -1 if skipped or failed */
 int space_output(size n_bits, size addr_bits, FILE *f)
 {
+  out_copied = 0;
   if(f == NULL)
     return -1;
   if(n_bits == 0)
@@ -163,6 +188,7 @@ int space_output(size n_bits, size addr_bits, FILE *f)
     out_used += (int)take;
     n_bits -= take;
     addr_bits = (size)(addr_bits + take);
+    out_copied = (size)(out_copied + take);
     if(out_used == CHAR_BIT)
     {
       int ok = fwrite(&out_byte, 1, 1, f) == 1;
@@ -212,7 +238,7 @@ static unsigned char output_state(void)
    alignment is not required: bitcpy writes it */
 static inline int query_ok(size addr_bits)
 {
-  if((size_t)addr_bits + STATE_BITS > space_nbits)
+  if((size_t)addr_bits + STATE_BITS + nfield_bits > space_nbits)
     return 0;
   if((size_t)addr_bits < proc_n * instruction_size)
     return 0;
@@ -237,12 +263,14 @@ void run_instruction(size i)
     {
       unsigned char st = input_state();
       bitcpy(STATE_BITS, &st, 0, space, dst);
+      store_count((size)(dst + STATE_BITS), in_copied);
       return;
     }
     if(dst == last && src != last && query_ok(src))
     {
       unsigned char st = output_state();
       bitcpy(STATE_BITS, &st, 0, space, src);
+      store_count((size)(src + STATE_BITS), out_copied);
       return;
     }
     return;

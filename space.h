@@ -36,7 +36,8 @@ enum {
   SPACE_BITS_MAX = 1 << (8 * (int)sizeof(size)), /* -s limit (addresses are fields) */
   PROCESSOR_START = 0,      /* bit index of the first instruction */
   N_FIELDS = 3,             /* fields in an instruction: n, dst, src */
-  STATE_BITS = 8,           /* bits in a channel state query */
+  STATE_BITS = 8,           /* query: leading state bits, then the last
+                               transfer count in nfield_bits (low byte first) */
   STATE_END = 0x01,         /* read side: end of input seen */
   STATE_IN_FAIL = 0x02,     /* read side: input failure */
   STATE_OUT_FAIL = 0x01,    /* write side: output failure */
@@ -47,8 +48,8 @@ enum {
 /* limits (checked at startup, derived in parse_config):
    8 <= space_nbits <= SPACE_BITS_MAX,
    proc_n >= 1,
-   proc_n * instruction_size <= space_nbits - 8
-   (processor instructions plus the channel state byte outside them),
+   proc_n * instruction_size <= space_nbits - (STATE_BITS + nfield_bits)
+   (processor plus the query record: state and count),
    proc_n * instruction_size <= 2^nfield_bits - 1
    (the boot instruction count must fit the count field).
    Field widths follow the space size, so smaller spaces use narrower

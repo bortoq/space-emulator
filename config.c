@@ -87,9 +87,10 @@ void parse_config(int argc, char **argv)
     usage();
   }
   compute_format();
-  if(proc_n > (space_nbits - 8) / instruction_size)
+  if(space_nbits < (size_t)STATE_BITS + nfield_bits ||
+     proc_n > (space_nbits - (size_t)STATE_BITS - nfield_bits) / instruction_size)
   {
-    fprintf(stderr, "space: need processor instructions plus state byte outside them (-s/-p)\n");
+    fprintf(stderr, "space: need processor instructions plus query record outside them (-s/-p)\n");
     usage();
   }
   if(proc_n * (size_t)instruction_size > ((size_t)1 << nfield_bits) - 1)

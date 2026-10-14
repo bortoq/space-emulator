@@ -51,12 +51,16 @@ the tick. Stream bits go on from one access to the next. The first bit of a
 stream byte is its high bit. An incomplete transfer takes the bits it got. The
 next access takes the rest.
 
-A NOP with `LAST` (`n = 0`) is a state query: `[0, dst, LAST]` writes 8 bits
-of the read state to `[dst, dst+8)`, `[0, LAST, src]` writes 8 bits of the
-write state to `[src, src+8)`. Read state: bit 0 — the input ended,
+A NOP with `LAST` (`n = 0`) is a state query. It writes 8 bits of state.
+Then it writes the count of the last transfer. The count takes `a-1` bits
+in bytes after the state. The first count byte is the low byte of the count.
+`[0, dst, LAST]` writes the read state and the input count to
+`[dst, dst+8+(a-1))`. `[0, LAST, src]` writes the write state and the output
+count to `[src, src+8+(a-1))`. Read state: bit 0 — the input ended,
 bit 1 — the input failed. Write state: bit 0 — the output failed.
-The other bits are zero. The query target is outside the processor.
-The state shows the stream conditions at query time.
+The other state bits are zero. The count is the number of bits the last
+transfer moved. The query needs room for state and count outside the
+processor. The state shows the stream conditions at query time.
 
 One tick does at most one input and one output with `n` not zero.
 The program must keep to this rule.
@@ -81,15 +85,15 @@ make check          # + tests (tests/run_tests.sh)
 
 # run: space [-s bits] [-p num] [-t ticks] < user_space > result.
 # defaults: 65520 bits, 64 instructions, no tick limit.
-# limits: -s >= 8; with a = ceil(log2 -s):
-#   -p * (3a-1) <= -s - 8       (processor plus state byte)
-#   -p * (3a-1) <= 2^(a-1) - 1  (boot count fits field n)
+# limits: with a = ceil(log2 -s):
+#   -p * (3a-1) <= -s - (8 + a - 1)  (processor plus query record)
+#   -p * (3a-1) <= 2^(a-1) - 1       (boot count fits field n)
 # a wrong flag or limit gives exit code 2.
-# smallest space: -s 22 -p 1 (one instruction of 14 bits).
+# smallest space: -s 26 -p 1 (one 14-bit instruction plus the query record).
 # with defaults: instruction 47 bits, -p up to 697.
 
 # smallest example: 14 zero program bits; load tick, NOP stop, silence:
-head -c 2 /dev/zero | ./space -s 22 -p 1 | xxd    # empty output
+head -c 2 /dev/zero | ./space -s 26 -p 1 | xxd    # empty output
 
 # example with defaults (stream bytes: first printf in tests/boot.sh):
 # program (8,0x2000,LAST), (8,0x2010,0x2000), (8,LAST,0x2010),

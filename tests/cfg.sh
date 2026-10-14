@@ -11,11 +11,12 @@ if [ ! -x ./space ]; then
   echo "no ./space, run make first"
   exit 1
 fi
-# smallest space: 1 instruction of 14 bits (5+5+4), stream of 2 zero
-# bytes: load tick, NOP stop, silence.
-{ head -c 2 /dev/zero; } | timeout 5 ./space -s 22 -p 1 > /tmp/cfg_min.out
+# smallest space: 1 instruction of 14 bits (5+5+4) plus the query
+# record (8+4 bits), stream of 2 zero bytes: load tick, NOP stop,
+# silence.
+{ head -c 2 /dev/zero; } | timeout 5 ./space -s 26 -p 1 > /tmp/cfg_min.out
 test ! -s /tmp/cfg_min.out
-echo "ok: -s 22 -p 1 (smallest space)"
+echo "ok: -s 26 -p 1 (smallest space)"
 # -s 56: instruction 17 bits (6+5+6), 1 instruction, stream of 3 zeros.
 { head -c 3 /dev/zero; } | timeout 5 ./space -s 56 -p 1 > /tmp/cfg_56.out
 test ! -s /tmp/cfg_56.out
@@ -49,6 +50,7 @@ check_err() {
   test "$code" -eq 2
 }
 check_err ./space -s 21 -p 1 < /dev/null
+check_err ./space -s 22 -p 1 < /dev/null
 check_err ./space -s 4 -p 1 < /dev/null
 check_err ./space -s 100000 < /dev/null
 check_err ./space -p 0 < /dev/null
