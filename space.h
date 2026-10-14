@@ -59,7 +59,7 @@ extern const size s[N_FIELDS];
 extern const size core[3];
 
 /* ENGINE */
-extern int halted;               /* 1 после конца ввода/ошибки: доработать такт и встать */
+extern int halted;               /* 1 после конца ввода/ошибки: такт до конца, затем останов */
 extern FILE *channel_in;         /* поток ввода (по умолчанию stdin) */
 extern FILE *channel_out;        /* поток вывода (по умолчанию stdout) */
 void run_instruction(size i);    /* исполнить i-ю инструкцию (копия или канал) */

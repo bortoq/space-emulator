@@ -12,6 +12,6 @@ check: all
 	./tests/run_tests.sh
 
 clean:
-	rm -f space tests/test_bitcpy tests/test_channels
+	rm -f space
 
 .PHONY: all check clean

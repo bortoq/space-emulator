@@ -16,7 +16,7 @@ int main()
 
   init_space();
 
-  /* emulate computation (доработать такт и при halted) */
+  /* emulate computation (такт до конца и при halted) */
   while(time-- && !halted)
     computation();
 
