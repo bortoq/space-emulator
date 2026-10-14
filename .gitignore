@@ -1,0 +1,6 @@
+space
+assembler
+disassembler
+tests/test_bitcpy
+*.o
+*.bin
