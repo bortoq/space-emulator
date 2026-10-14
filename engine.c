@@ -2,11 +2,12 @@
  * ADDRESS SPACE ENGINE (single channel version)
  *
  * Каждый такт делится на две фазы: сначала прочитываются все
- * PROCESSOR_N инструкций "copy n, dst, src" из специальных позиций,
+ * инструкции "copy n, dst, src" из специальных позиций,
  * затем исполняются все копирования над битовым пространством space.
- * Инструкция с первой позицией полуинтервала источника LAST —
- * ввод (stdin -> пространство), с первой позицией полуинтервала
- * приёмника LAST — вывод (пространство -> stdout); остальное —
+ * Инструкция с первой позицией полуинтервала источника, равной
+ * последней позиции пространства, — ввод (stdin -> пространство),
+ * с первой позицией полуинтервала приёмника, равной ей же, —
+ * вывод (пространство -> stdout); остальное —
  * обычные внутренние копирования. Записи в специальные позиции
  * (включая загрузку) действуют со следующего такта; порядок позиций
  * внутри фаз безразличен. Непересекаемость полуинтервалов
@@ -32,7 +33,7 @@ static inline size get_argument(size src, size n)
 static inline void fetch_instruction(size i)
 {
   size a;
-  if(i >= PROCESSOR_N)
+  if((size_t)i >= proc_n)
     return;
   for(a = 0; a < N_FIELDS; ++a)
     processor[i][a] = get_argument(PROCESSOR_START + i * INSTRUCTION_SIZE + o[a], s[a]);
@@ -41,7 +42,7 @@ static inline void fetch_instruction(size i)
 /* write parsed instruction bit string to special positions (init) */
 static inline void store_instruction(size i, size n, size dst, size src)
 {
-  if(i >= PROCESSOR_N)
+  if((size_t)i >= proc_n)
     return;
   bitcpy(s[0], &n, 0, space, INSTRUCTION_SIZE * i + o[0]);
   bitcpy(s[1], &dst, 0, space, INSTRUCTION_SIZE * i + o[1]);
@@ -51,11 +52,11 @@ static inline void store_instruction(size i, size n, size dst, size src)
 /* check instruction half-intervals before copy */
 static inline int instruction_ok(size n, size dst, size src)
 {
-  if((size_t)n > SPACE_SIZE)
+  if((size_t)n > space_nbits)
     return 0;
-  if((size_t)dst + (size_t)n > SPACE_SIZE)
+  if((size_t)dst + (size_t)n > space_nbits)
     return 0;
-  if((size_t)src + (size_t)n > SPACE_SIZE)
+  if((size_t)src + (size_t)n > space_nbits)
     return 0;
   return 1;
 }
@@ -84,7 +85,7 @@ int space_input(size n_bits, size addr_bits, FILE *f)
   if(addr_bits % CHAR_BIT != 0)
     return -1;
   n_bytes = (size_t)n_bits / CHAR_BIT;
-  if((size_t)addr_bits + (size_t)n_bits > SPACE_SIZE)
+  if((size_t)addr_bits + (size_t)n_bits > space_nbits)
     return -1;
   done = fread(&space[addr_bits / CHAR_BIT], 1, n_bytes, f);
   if(done != n_bytes)
@@ -110,7 +111,7 @@ int space_output(size n_bits, size addr_bits, FILE *f)
   if(addr_bits % CHAR_BIT != 0)
     return -1;
   n_bytes = (size_t)n_bits / CHAR_BIT;
-  if((size_t)addr_bits + (size_t)n_bits > SPACE_SIZE)
+  if((size_t)addr_bits + (size_t)n_bits > space_nbits)
     return -1;
   done = fwrite(&space[addr_bits / CHAR_BIT], 1, n_bytes, f);
   if(done != n_bytes)
@@ -125,22 +126,23 @@ int space_output(size n_bits, size addr_bits, FILE *f)
    ordinary copy or single channel transfer */
 void run_instruction(size i)
 {
-  size n, dst, src;
-  if(i >= PROCESSOR_N)
+  size n, dst, src, last;
+  if((size_t)i >= proc_n)
     return;
   n = processor[i][0];
   dst = processor[i][1];
   src = processor[i][2];
   if(n == 0)
     return;
-  if(src == LAST && dst == LAST)
+  last = (size)(space_nbits - 1);
+  if(src == last && dst == last)
     return;
-  if(src == LAST)
+  if(src == last)
   {
     space_input(n, dst, channel_in);
     return;
   }
-  if(dst == LAST)
+  if(dst == last)
   {
     space_output(n, src, channel_out);
     return;
@@ -158,7 +160,7 @@ int computation(void)
 {
   size i;
   int alive = 0;
-  for(i = 0; i < PROCESSOR_N; ++i)
+  for(i = 0; (size_t)i < proc_n; ++i)
   {
     fetch_instruction(i);
     if(processor[i][0])
@@ -166,19 +168,29 @@ int computation(void)
   }
   if(!alive)
     return 0;
-  for(i = 0; i < PROCESSOR_N; ++i)
+  for(i = 0; (size_t)i < proc_n; ++i)
     run_instruction(i);
   return 1;
 }
 
-/* write the single boot instruction bit string */
+/* allocate space, write the single boot instruction bit string */
 void init_space(void)
 {
+  size boot_n, boot_last;
   init_channels();
-  memset(space, 0, sizeof space);
-  memset(processor, 0, sizeof processor);
-  processor[0][0] = core[0];
-  processor[0][1] = core[1];
-  processor[0][2] = core[2];
-  store_instruction(0, core[0], core[1], core[2]);
+  space = malloc(space_nbits / CHAR_BIT);
+  processor = malloc(proc_n * sizeof *processor);
+  if(space == NULL || processor == NULL)
+  {
+    fprintf(stderr, "space: out of memory\n");
+    exit(1);
+  }
+  memset(space, 0, space_nbits / CHAR_BIT);
+  memset(processor, 0, proc_n * sizeof *processor);
+  boot_n = (size)(proc_n * INSTRUCTION_SIZE);
+  boot_last = (size)(space_nbits - 1);
+  processor[0][0] = boot_n;
+  processor[0][1] = PROCESSOR_START;
+  processor[0][2] = boot_last;
+  store_instruction(0, boot_n, PROCESSOR_START, boot_last);
 }
