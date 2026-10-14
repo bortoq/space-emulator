@@ -49,7 +49,8 @@ output, and one tick may perform both.
 Channel copies are normal processor instructions. They run in order inside
 the tick. Stream bits go on from one access to the next. The first bit of a
 stream byte is its high bit. An incomplete transfer takes the bits it got. The
-next access takes the rest.
+next access takes the rest. Bits stay in the emulator until a byte is full.
+At program end the last output byte is written with zero padding.
 
 A NOP with `LAST` (`n = 0`) is a state query. It writes 8 bits of state.
 Then it writes the count of the last transfer. The count takes `a-1` bits
