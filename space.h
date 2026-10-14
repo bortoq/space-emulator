@@ -1,16 +1,12 @@
 /*
  * ADDRESS SPACE DEFINITIONS (fixed variant)
  *
- * Эмулятор параллельного адресного пространства позиций.
- * Оригинал: dmitri bortoq, demo1 (2022-2024), MIT license.
- * Исправленный вариант: устранены ошибки оригинала
- * (см. README.md, раздел "Исправления").
+ * copyright 2024-10-31, dmitri bortoq, mit license
  *
- * Устройство: пространство = одновременно доступные битовые позиции.
+ * Адресное пространство позиций: одновременно доступные битовые позиции.
  * Единственное действие: копирование битовых интервалов
  *   copy n, dst, src  (n бит из src в dst, интервалы не пересекаются).
  */
-
 #ifndef SPACE_H_
 #define SPACE_H_
 
@@ -20,7 +16,7 @@
 #include <stdlib.h>
 #include <limits.h>
 
-/* Настройки адресного пространства */
+/* address space settings */
 enum {
   SPACE_SIZE = 0xFFF0,             /* бит в пространстве; ограничение версии:
                                       кратно 8 и кратно INSTRUCTION_SIZE */
@@ -35,28 +31,21 @@ enum {
   CH_OUT = 1                      /* индекс инструкции-дескриптора вывода */
 };
 
-/* Тип аргумента инструкции (достаточно широк для любого поля) */
-typedef uint16_t size;
+/* types */
+typedef uint16_t  size;           /* large enough for instruction argument */
 
-/*
- * Копирование битов (n, src, s, dst, d):
- *   n - число копируемых бит;
- *   src - исходный массив, s - исходный битовый индекс;
- *   dst - массив-приёмник, d - битовый индекс приёмника.
- * Бит 0 байта = старший бит (маска 0x80), нумерация подряд.
- * Перекрывающиеся интервалы внутри одного массива безопасны.
- */
+/* copy bits from one array to another (n, src, s, dst, d) */
 void bitcpy(size_t n, const void *src, size_t s, void *dst, size_t d);
 
-/* Таблицы (определения — в globals.c) */
-extern size processor[PROCESSOR_N][3]; /* разобранные инструкции копирования */
-extern unsigned char space[SPACE_SIZE / CHAR_BIT]; /* биты пространства */
+/* GLOBALS (определения — в globals.c) */
+extern size processor[PROCESSOR_N][3];       /* parsed copy instructions */
+extern unsigned char space[SPACE_SIZE / CHAR_BIT]; /* data bits of the bit space */
 
-/* Формат инструкции: смещения и длины полей [n, dst, src] */
+/* format of the instruction [n, dst, src] */
 extern const size o[N_FIELDS];
 extern const size s[N_FIELDS];
 
-/* Стартовое содержимое: 3 разобранные инструкции (n, dst, src) */
+/* стартовое ядро: 3 разобранные инструкции (n, dst, src) */
 extern const size core[9];
 
 #endif /* SPACE_H_ */
