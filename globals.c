@@ -1,9 +1,9 @@
 /*
  * ADDRESS SPACE TABLES
  *
- * Определения таблиц из space.h (один файл определений),
- * чтобы не было множественных определений из заголовка.
- * Размеры задаются флагами; память выделяется в init_space.
+ * Definitions for space.h (single definition file),
+ * so there are no multiple definitions from the header.
+ * Sizes come from flags; memory is allocated in init_space.
  */
 #include "space.h"
 
@@ -14,6 +14,6 @@ uint64_t tick_limit = 0;
 size (*processor)[3] = NULL;
 unsigned char *space = NULL;
 
-/* format of the instruction "copy n, dst, src" (формат неизменен) */
+/* format of the instruction "copy n, dst, src" (format never changes) */
 const size o[N_FIELDS] = {0, N_SIZE, N_SIZE + ADDRESS_SIZE};
 const size s[N_FIELDS] = {N_SIZE, ADDRESS_SIZE, ADDRESS_SIZE};

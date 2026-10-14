@@ -1,20 +1,20 @@
 /*
  * COMMAND LINE CONFIGURATION
  *
- * Разбор флагов -s/-p/-t в globals.c; проверка пределов версии.
- * Использование: space [-s bits] [-p num] [-t ticks] < user_space > result.
+ * Parse flags -s/-p/-t into globals.c; check version limits.
+ * Usage: space [-s bits] [-p num] [-t ticks] < user_space > result.
  */
 #include "space.h"
 #include <errno.h>
 
-/* usage и выход 2 */
+/* usage and exit 2 */
 static void usage(void)
 {
   fprintf(stderr, "usage: space [-s bits] [-p num] [-t ticks]\n");
   exit(2);
 }
 
-/* целое десятичное число; ошибка — usage */
+/* decimal integer; error means usage */
 static uint64_t parse_ull(const char *s)
 {
   char *end;
@@ -28,7 +28,7 @@ static uint64_t parse_ull(const char *s)
   return v;
 }
 
-/* значение флага: остаток того же аргумента (-s384) или следующий (-s 384) */
+/* flag value: rest of the same argument (-s384) or the next one (-s 384) */
 static const char *flag_value(int *i, int argc, char **argv, const char *arg)
 {
   if(arg[2])
@@ -39,7 +39,7 @@ static const char *flag_value(int *i, int argc, char **argv, const char *arg)
   return argv[*i];
 }
 
-/* флаги в globals.c; проверка пределов версии */
+/* flags into globals.c; check version limits */
 void parse_config(int argc, char **argv)
 {
   int i;

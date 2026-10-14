@@ -1,23 +1,23 @@
 /*
  * BIT COPY (clean fast implementation)
  *
- * Побитовое копирование между массивами. Написано заново,
- * искать автора не нужно.
+ * Bitwise copying between arrays. Written from scratch,
+ * no need to find the author.
  *
- * Три пути по положению полуинтервалов в байтах: при одинаковых
- * позициях в байте — края одной маской, середина memcpy;
- * короткие со сдвигом (всё влезает в 64-битное слово) — сборка слова
- * параллельными сдвигами и побайтовая раздача;
- * длинные со сдвигом — края рекурсией в то же слово, середина циклом
- * со сдвигом и переносом через соседний байт, по два байта за итерацию
- * с независимыми вычислениями, без заглядывания вперёд (читаются
- * только байты с копируемыми битами).
- * Циклов по отдельным битам нет ни на одном пути.
- * Пересечение копируемых полуинтервалов не контролируется:
- * гарантируется, что копирований "внахлест" не будет
- * (устройство пространства требует непересекающихся интервалов).
+ * Three paths by half-interval position inside bytes: with equal
+ * positions inside the byte, edges with a single mask, memcpy middle;
+ * short shifted copies (all fits into a 64-bit word): assemble the word
+ * with parallel shifts and distribute byte by byte;
+ * long shifted copies: edges via recursion into the same word, middle
+ * with a shift-and-carry loop through the neighbor byte, two bytes per
+ * iteration with independent computations, no reading ahead (only bytes
+ * holding copied bits are read).
+ * No path has per-bit loops.
+ * Overlap of copied half-intervals is never checked:
+ * overlapping copies are guaranteed never to occur
+ * (the space device requires non-overlapping intervals).
  *
- * Соглашение о битах: бит 0 байта = старший (0x80), далее подряд.
+ * Bit convention: bit 0 of a byte is the high bit (0x80), then in order.
  */
 #include <limits.h>
 #include <stddef.h>
@@ -47,10 +47,10 @@ void bitcpy(size_t n, const void *src_org, size_t src_offset, void *dst_org, siz
   src = (const unsigned char*)src_org;
   dst = (unsigned char*)dst_org;
 
-  /* соосные интервалы: у начала совпадает позиция в байте */
+  /* aligned intervals: same position inside the byte at the start */
   if((src_offset & 7) == (dst_offset & 7))
   {
-    /* ведущий неполный байт одной маской */
+    /* leading partial byte with a single mask */
     if(dst_offset & 7)
     {
       const unsigned char *sp;
@@ -73,7 +73,7 @@ void bitcpy(size_t n, const void *src_org, size_t src_offset, void *dst_org, siz
       if(n == 0)
         return;
     }
-    /* целые байты */
+    /* whole bytes */
     if(n >= 8)
     {
       size_t bytes = n / CHAR_BIT;
@@ -82,7 +82,7 @@ void bitcpy(size_t n, const void *src_org, size_t src_offset, void *dst_org, siz
       dst_offset += bytes * CHAR_BIT;
       n -= bytes * CHAR_BIT;
     }
-    /* хвостовой неполный байт одной маской */
+    /* trailing partial byte with a single mask */
     if(n)
     {
       const unsigned char *sp;
@@ -96,7 +96,7 @@ void bitcpy(size_t n, const void *src_org, size_t src_offset, void *dst_org, siz
     return;
   }
 
-  /* короткие сдвинутые: окно src влезает в 64 бита */
+  /* short shifted copies: the src window fits into 64 bits */
   if((src_offset & 7) + n <= 64)
   {
     const unsigned char *sp;
@@ -128,7 +128,7 @@ void bitcpy(size_t n, const void *src_org, size_t src_offset, void *dst_org, siz
     w >>= sb * 8 - (src_offset & 7) - n;
     if(n < 64)
       w &= (((uint64_t)1 << n) - 1);
-    /* раздача: ведущий неполный байт, целые байты, хвост */
+    /* distribution: leading partial byte, whole bytes, tail */
     dp = dst + dst_offset / CHAR_BIT;
     m = dst_offset & 7;
     rem = n;
@@ -160,7 +160,7 @@ void bitcpy(size_t n, const void *src_org, size_t src_offset, void *dst_org, siz
     return;
   }
 
-  /* длинные сдвинутые: ведущий край окном (рекурсия, там take <= 7) */
+  /* long shifted copies: leading edge via window (recursion, take <= 7 there) */
   if(dst_offset & 7)
   {
     size_t take = 8 - (dst_offset & 7);
@@ -170,7 +170,7 @@ void bitcpy(size_t n, const void *src_org, size_t src_offset, void *dst_org, siz
     n -= take;
   }
 
-  /* середина сдвоенным carry-циклом: две независимые цепочки */
+  /* middle with a dual carry loop: two independent chains */
   if(n >= 16)
   {
     const unsigned char *sp;
@@ -196,7 +196,7 @@ void bitcpy(size_t n, const void *src_org, size_t src_offset, void *dst_org, siz
     }
   }
 
-  /* остаток (< 16 бит) — тем же bitcpy, уйдёт в окно */
+  /* remainder (< 16 bits) with the same bitcpy, goes into the window */
   if(n)
     bitcpy(n, src_org, src_offset, dst_org, dst_offset);
 }

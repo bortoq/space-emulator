@@ -3,15 +3,15 @@
  *
  * copyright 2024-10-31, dmitri bortoq, mit license
  *
- * Адресное пространство позиций: одновременно доступные битовые позиции.
- * Единственное действие: копирование битовых полуинтервалов
- *   copy n, dst, src  (n бит из [src, src+n) в [dst, dst+n)).
- * Непересекаемость полуинтервалов эмулятор не проверяет, он на неё
- * полагается; её обеспечивает программа, исполняемая в пространстве.
+ * Address space of positions: simultaneously available bit positions.
+ * The single action: copying bit half-intervals
+ *   copy n, dst, src  (n bits from [src, src+n) to [dst, dst+n)).
+ * The emulator does not check half-interval non-overlap, it relies on it;
+ * the program running in the space guarantees it.
  *
- * Размеры задаются флагами (-s биты пространства, -p инструкции процессора),
- * ниже — значения по умолчанию и формат (формат неизменен).
- * Единственный канал наружу — последняя позиция пространства.
+ * Sizes come from flags (-s space bits, -p processor instructions),
+ * below are defaults and the format (the format never changes).
+ * The single outward channel is the last position of the space.
  */
 #ifndef SPACE_H_
 #define SPACE_H_
@@ -24,40 +24,40 @@
 
 /* defaults and format */
 enum {
-  SPACE_BITS_DFLT = 0xFFF0,       /* -s по умолчанию (бит) */
-  PROC_N_DFLT = 64,               /* -p по умолчанию (инструкций) */
-  N_SIZE = 16,                    /* бит в поле "n" инструкции */
-  ADDRESS_SIZE = 16,              /* бит в поле "dst" (у "src" столько же) */
-  INSTRUCTION_SIZE = 16 + 2 * 16, /* бит в инструкции "copy n, dst, src" (> 10) */
-  PROCESSOR_START = 0,            /* битовый индекс первой инструкции */
-  N_FIELDS = 3                    /* полей в инструкции: n, dst, src */
+  SPACE_BITS_DFLT = 0xFFF0,       /* -s default (bits) */
+  PROC_N_DFLT = 64,               /* -p default (instructions) */
+  N_SIZE = 16,                    /* bits in the "n" field of an instruction */
+  ADDRESS_SIZE = 16,              /* bits in the "dst" field ("src" has the same) */
+  INSTRUCTION_SIZE = 16 + 2 * 16, /* bits in "copy n, dst, src" (> 10) */
+  PROCESSOR_START = 0,            /* bit index of the first instruction */
+  N_FIELDS = 3                    /* fields in an instruction: n, dst, src */
 };
 
-/* limits (проверяются при запуске):
-   1 <= space_nbits <= 2^ADDRESS_SIZE (позиции адресуются полями),
+/* limits (checked at startup):
+   1 <= space_nbits <= 2^ADDRESS_SIZE (fields address positions),
    proc_n >= 1, space_nbits >= proc_n * INSTRUCTION_SIZE + 8
-   (инструкции процессора плюс байт состояния канала вне их).
-   Делением без переполнения: proc_n <= (space_nbits - 8) / INSTRUCTION_SIZE.
-   Кратности размера, кроме вытекающей из содержимого, нет: массивы
-   выделяются с округлением вверх, лишние биты последнего байта
-   не адресуются. При нынешних ширинах отсюда proc_n <= 1365 < 65535:
-   индекса `size` достаточно везде. */
+   (processor instructions plus the channel state byte outside them).
+   Division without overflow: proc_n <= (space_nbits - 8) / INSTRUCTION_SIZE.
+   No size multiple is required besides what the content implies: arrays
+   are allocated rounding up, extra bits of the last byte
+   are never addressed. With current widths proc_n <= 1365 < 65535:
+   a `size` index is enough everywhere. */
 
 /* types */
 typedef uint16_t  size;           /* large enough for instruction argument */
 _Static_assert(N_SIZE <= 16 && ADDRESS_SIZE <= 16, "fields fit size");
 
-/* configuration (-s, -p, -t; определения — в globals.c) */
-extern size_t space_nbits;        /* бит в пространстве */
-extern size_t proc_n;             /* инструкций в процессоре */
-extern uint64_t tick_limit;       /* -t (0 — без предела) */
+/* configuration (-s, -p, -t; definitions in globals.c) */
+extern size_t space_nbits;        /* bits in the space */
+extern size_t proc_n;             /* instructions in the processor */
+extern uint64_t tick_limit;       /* -t (0 means no limit) */
 
 /* copy bits from one array to another (n, src, s, dst, d).
-   Полуинтервалы [s, s + n) и [d, d + n) не пересекаются
-   (гарантия вызывающей стороны). */
+   Half-intervals [s, s + n) and [d, d + n) do not overlap
+   (caller guarantee). */
 void bitcpy(size_t n, const void *src, size_t s, void *dst, size_t d);
 
-/* GLOBALS (определения — в globals.c, движок — в engine.c) */
+/* GLOBALS (definitions in globals.c, engine in engine.c) */
 extern size (*processor)[3];               /* parsed copy instructions */
 extern unsigned char *space;               /* data bits of the bit space */
 
@@ -66,12 +66,12 @@ extern const size o[N_FIELDS];
 extern const size s[N_FIELDS];
 
 /* ENGINE */
-extern FILE *channel_in;         /* поток ввода (по умолчанию stdin) */
-extern FILE *channel_out;        /* поток вывода (по умолчанию stdout) */
-void run_instruction(size i);    /* исполнить прочитанную i-ю инструкцию */
-int computation(void);           /* такт: состояние 1 если исполнен, 0 если все NOP */
-void parse_config(int argc, char **argv); /* флаги -s/-p/-t, проверка пределов */
-void init_space(void);           /* выделение, начальная инструкция, каналы */
+extern FILE *channel_in;         /* input stream (stdin by default) */
+extern FILE *channel_out;        /* output stream (stdout by default) */
+void run_instruction(size i);    /* execute the already read i-th instruction */
+int computation(void);           /* tick: state 1 if executed, 0 if all NOP */
+void parse_config(int argc, char **argv); /* flags -s/-p/-t, limit checks */
+void init_space(void);           /* allocation, boot instruction, channels */
 int space_input(size n_bits, size addr_bits, FILE *f);  /* f -> space, 0 ok */
 int space_output(size n_bits, size addr_bits, FILE *f); /* space -> f, 0 ok */
 

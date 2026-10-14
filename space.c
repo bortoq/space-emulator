@@ -3,10 +3,10 @@
  *
  * copyright 2022-12-17, dmitri bortoq, mit license
  *
- * Точка входа: разбор флагов, начальная инструкция ядра и такты engine.c.
- * Использование: space [-s bits] [-p num] [-t ticks] < user_space > result.
- * Непересекаемость полуинтервалов обеспечивает программа,
- * эмулятор на неё полагается (не проверяет).
+ * Entry point: flag parsing, boot instruction of the core, engine ticks.
+ * Usage: space [-s bits] [-p num] [-t ticks] < user_space > result.
+ * The program guarantees half-interval non-overlap,
+ * the emulator relies on it (never checks).
  */
 #include "space.h"
 
@@ -20,7 +20,8 @@ int main(int argc, char **argv)
 
   init_space();
 
-  /* emulate computation (останов: все NOP или предел тактов) */
+  /* emulate computation (tick runs to end even with no live instructions;
+     stop: all NOP or tick limit) */
   while((tick_limit == 0 || time--))
     if(!computation())
       break;

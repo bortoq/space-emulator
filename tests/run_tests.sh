@@ -1,23 +1,23 @@
 #!/bin/sh
-# Проверки эмулятора: сборка и сквозные проверки через stdin/stdout.
+# Emulator checks: build and end-to-end checks over stdin/stdout.
 set -e
 cd "$(dirname "$0")/.."
 CC="${CC:-gcc}"
 CFLAGS="-std=c11 -Wall -Wextra -O2"
 
-echo "== сборка =="
+echo "== build =="
 $CC $CFLAGS -o space space.c engine.c config.c globals.c bitcopy.c
 
-echo "== загрузка и исполнение =="
+echo "== load and run =="
 ./tests/boot.sh
 
-echo "== останов NOPами =="
+echo "== NOP stop =="
 ./tests/stop.sh
 
-echo "== запросы состояния =="
+echo "== state queries =="
 ./tests/state.sh
 
-echo "== размеры и флаги =="
+echo "== sizes and flags =="
 ./tests/cfg.sh
 
-echo "ВСЕ ПРОВЕРКИ ПРОШЛИ"
+echo "ALL CHECKS PASSED"

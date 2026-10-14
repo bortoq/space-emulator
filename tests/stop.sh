@@ -1,18 +1,18 @@
 #!/bin/sh
-# Останов заполненностью NOPами: программа зануляет свою запись инструкций,
-# выводит ноль и встаёт. Программа: (3072,0,0x2000), (8,LAST,0x3000),
-# 62 нулевые тройки. Полуинтервалы не пересекаются.
-# Значения полей — в порядке байтов хоста.
-# Такт 1: исполняются ранее прочитанные инструкции (загрузка, тишина);
-# такт 2: стирание записи + вывод нуля; такт 3: все n равны нулю — останов.
-# Наружу: один нулевой байт (без quiescence было бы пятнадцать).
+# Stop on NOP-filled processor: the program zeroes its own instruction record,
+# outputs zero and stops. Program: (3072,0,0x2000), (8,LAST,0x3000),
+# 62 zero triples. Half-intervals do not overlap.
+# Field values follow host byte order.
+# Tick 1 executes the previously read instructions (load, silence);
+# tick 2 zeroes the record and outputs zero; tick 3: all n are zero, stop.
+# Outward: a single zero byte (fifteen without quiescence).
 set -e
 cd "$(dirname "$0")/.."
 if [ ! -x ./space ]; then
-  echo "нет ./space, сначала make"
+  echo "no ./space, run make first"
   exit 1
 fi
 { printf '\000\014\000\000\000\040\010\000\357\377\000\060'; head -c 372 /dev/zero; } | timeout 5 ./space > /tmp/stop_run.out
 head -c 1 /dev/zero > /tmp/stop_expected.out
 cmp /tmp/stop_run.out /tmp/stop_expected.out
-echo "ok: останов NOPами (один нулевой байт)"
+echo "ok: NOP stop (single zero byte)"

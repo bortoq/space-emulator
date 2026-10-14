@@ -1,17 +1,17 @@
 /*
  * ADDRESS SPACE ENGINE (single channel version)
  *
- * Каждый такт делится на две фазы: сначала прочитываются все
- * инструкции "copy n, dst, src" из специальных позиций,
- * затем исполняются все копирования над битовым пространством space.
- * Инструкция с первой позицией полуинтервала источника, равной
- * последней позиции пространства, — ввод (stdin -> пространство),
- * с первой позицией полуинтервала приёмника, равной ей же, —
- * вывод (пространство -> stdout); остальное —
- * обычные внутренние копирования. Записи в специальные позиции
- * (включая загрузку) действуют со следующего такта; порядок позиций
- * внутри фаз безразличен. Непересекаемость полуинтервалов
- * не проверяется: её обеспечивает программа, эмулятор на неё полагается.
+ * Each tick has two phases: first read all
+ * "copy n, dst, src" instructions from the special positions,
+ * then execute all copies over the bit space.
+ * An instruction whose source half-interval starts at the last
+ * position of the space is input (stdin -> space),
+ * one whose destination half-interval starts there is
+ * output (space -> stdout); the rest are
+ * ordinary internal copies. Writes to special positions
+ * (including the load) take effect from the next tick; position order
+ * inside phases does not matter. Half-interval non-overlap
+ * is never checked: the program guarantees it, the emulator relies on it.
  */
 #include "space.h"
 #ifdef SIGPIPE
@@ -63,7 +63,7 @@ static inline int instruction_ok(size n, size dst, size src)
   return 1;
 }
 
-/* channel streams default to stdio (уже назначенные не трогаем — для тестов) */
+/* channel streams default to stdio (already assigned ones stay, for tests) */
 static inline void init_channels(void)
 {
   if(channel_in == NULL)
@@ -73,7 +73,7 @@ static inline void init_channels(void)
 }
 
 /* copy n_bits from f to the half-interval [addr_bits, addr_bits + n_bits).
-   return 0 if full, -1 if skipped or short (конец/сбой видны запросом) */
+   return 0 if full, -1 if skipped or short (end/failure seen via query) */
 int space_input(size n_bits, size addr_bits, FILE *f)
 {
   size_t n_bytes;
@@ -96,7 +96,7 @@ int space_input(size n_bits, size addr_bits, FILE *f)
 }
 
 /* copy n_bits from the half-interval [addr_bits, addr_bits + n_bits) to f.
-   return 0 if full, -1 if skipped or short (конец/сбой видны запросом) */
+   return 0 if full, -1 if skipped or short (end/failure seen via query) */
 int space_output(size n_bits, size addr_bits, FILE *f)
 {
   size_t n_bytes;
@@ -118,8 +118,8 @@ int space_output(size n_bits, size addr_bits, FILE *f)
   return 0;
 }
 
-/* байт состояния стороны чтения: бит 0 — встречен конец ввода,
-   бит 1 — сбой ввода (липкие флаги stdio, запрос их не сбрасывает) */
+/* state byte of the read side: bit 0 means end of input seen,
+   bit 1 means input failure (sticky stdio flags, query never clears them) */
 static unsigned char input_state(void)
 {
   unsigned char st = 0;
@@ -133,7 +133,7 @@ static unsigned char input_state(void)
   return st;
 }
 
-/* байт состояния стороны записи: бит 0 — сбой вывода */
+/* state byte of the write side: bit 0 means output failure */
 static unsigned char output_state(void)
 {
   unsigned char st = 0;
@@ -142,8 +142,8 @@ static unsigned char output_state(void)
   return st;
 }
 
-/* цель запроса (8 бит) обязана влезать и лежать вне процессора.
-   выравнивание не требуется: пишет bitcpy */
+/* query target (8 bits) must fit and lie outside the processor.
+   alignment is not required: bitcpy writes it */
 static inline int query_ok(size addr_bits)
 {
   if((size_t)addr_bits + 8 > space_nbits)
@@ -155,7 +155,7 @@ static inline int query_ok(size addr_bits)
 
 /* execute the already fetched i-th instruction:
    ordinary copy, channel transfer, or channel state query.
-   NOP с LAST — запрос состояния (единственное исключение). */
+   NOP with LAST is a state query (the single exception). */
 void run_instruction(size i)
 {
   size n, dst, src, last;
@@ -200,9 +200,9 @@ void run_instruction(size i)
 }
 
 /* one tick: first read all instructions, then execute all copies.
-   возврат состояния такта: 1 если исполнен (есть не-NOP), иначе 0.
-   канальные обращения идут в порядке инструкций,
-   так как stdin/stdout последовательны */
+   return tick state: 1 if executed (a non-NOP was present), else 0.
+   channel accesses follow instruction order,
+   because stdin/stdout are sequential */
 int computation(void)
 {
   size i;

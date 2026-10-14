@@ -1,203 +1,202 @@
-# Эмулятор адресного пространства позиций
+# Positional address space emulator
 
-Исправленный вариант демо `demo1` из `/media/user/PROJECT/work/model/s1/demo1/`
-(оригинал: dmitri bortoq, 2022–2024, MIT). Устройство и идея — из файлов
-`demo1.readme.rus.txt` / `demo1.readme2.rus.txt` оригинала.
+Fixed variant of demo `demo1` from `/media/user/PROJECT/work/model/s1/demo1/`
+(original: dmitri bortoq, 2022–2024, MIT). Device and idea come from the original
+`demo1.readme.rus.txt` / `demo1.readme2.rus.txt` files.
 
-## 1. Устройство пространства
+## 1. Space device
 
-Адресное пространство — это совокупность **одновременно доступных позиций**.
-Каждая позиция хранит бинарное значение (основание 2; возможны и другие).
-Единственное действие пространства — **копирование**:
+Address space is a set of **simultaneously available positions**.
+Each position holds a binary value (base 2; others are possible).
+The single action of the space is **copying**:
 
 ```
-copy n, dst, src   — скопировать n бит из src в dst
+copy n, dst, src   — copy n bits from src to dst
 ```
 
-Копирование битовых строк из полуинтервалов адресов должно быть **согласованным**:
-в одном одновременном копировании участвуют только **непересекающиеся**
-полуинтервалы. Ряд таких инструкций, исполняемый пространством за такт, и есть
-программа. Непересекаемость полуинтервалов эмулятор не проверяет — он на неё
-полагается; её обеспечивает программа, исполняемая в пространстве.
-Единственный канал наружу — последняя позиция пространства `LAST`:
+Copying bit strings from address half-intervals must be **consistent**:
+one simultaneous copy involves only **non-overlapping**
+half-intervals. A run of such instructions, executed by the space in one tick, is
+a program. The emulator never checks half-interval non-overlap — it relies
+on it; the program running in the space guarantees it.
+The single outward channel is the last position of the space, `LAST`:
 
-- первая позиция полуинтервала источника `LAST` (`[n, dst, LAST]`: полуинтервал
-  `[LAST, LAST+n)` вне пространства) — ввод: `n` бит из `stdin` в `[dst, dst+n)`;
-- первая позиция полуинтервала приёмника `LAST` (`[n, LAST, src]`: полуинтервал
-  `[LAST, LAST+n)` вне пространства) — вывод: `n` бит из `[src, src+n)` в `stdout`.
+- first position of the source half-interval is `LAST` (`[n, dst, LAST]`: the half-interval
+  `[LAST, LAST+n)` is outside the space) — input: `n` bits from `stdin` to `[dst, dst+n)`;
+- first position of the destination half-interval is `LAST` (`[n, LAST, src]`: the half-interval
+  `[LAST, LAST+n)` is outside the space) — output: `n` bits from `[src, src+n)` to `stdout`.
 
-Канальные копирования — обычные инструкции процессора и исполняются в порядке
-следования, в том же такте.
-NOP (0 в поле `n`) — никаких обращений наружу. Проверяется только полуинтервал внутри
-пространства; `[n, LAST, LAST]` — nop.
-NOP с `LAST` — запрос состояния канала (единственное исключение):
-`[0, dst, LAST]` пишет 8 бит состояния стороны чтения в `[dst, dst+8)`,
-`[0, LAST, src]` — 8 бит состояния стороны записи в `[src, src+8)`.
-Байт стороны чтения: бит 0 — встречен конец ввода, бит 1 — сбой ввода;
-байт стороны записи: бит 0 — сбой вывода; остальные биты — нули, резерв.
-Цель запроса — вне процессора. Запрос поток не трогает.
-Неполные чтение и запись (меньше запрошенного) кладут имеющееся
-и не останавливают: повторное обращение — тоже трансфер,
-после каждого обращения пользователь проверяет состояние канальным NOPом.
-Остановов по каналу нет вообще: только заполненность NOPами и флаг.
-В одном такте — не более одного ввода и одного вывода с ненулевым `n`
-(NOP ничего не читают и не пишут): каналы последовательны, а в
-пространстве порядок копирований задать нельзя, поэтому два ввода
-(два вывода) поделили бы один поток недетерминированно. Ограничение
-обеспечивает софт; эмулятор его не проверяет.
+Channel copies are ordinary processor instructions and run in order,
+in the same tick.
+NOP (0 in field `n`) means no outward accesses. Only the half-interval inside
+the space is checked; `[n, LAST, LAST]` is nop.
+NOP with `LAST` is a channel state query (the single exception):
+`[0, dst, LAST]` writes 8 state bits of the read side to `[dst, dst+8)`,
+`[0, LAST, src]` writes 8 state bits of the write side to `[src, src+8)`.
+Read-side byte: bit 0 means end of input seen, bit 1 means input failure;
+write-side byte: bit 0 means output failure; other bits are zero, reserved.
+The query target lies outside the processor. A query never touches the stream.
+Short reads and writes (less than requested) place what is available
+and never stop: a repeated access is also a transfer,
+after every access the user checks the state with a channel NOP.
+There are no channel stops at all: only NOP-filled processor and the flag.
+One tick holds at most one input and one output with nonzero `n`
+(NOPs neither read nor write): channels are sequential, and
+no copy order can be set in space, so two inputs
+(two outputs) would split one stream nondeterministically. The limit
+is guaranteed by software; the emulator never checks it.
 
-Пространство эмулируется программно (но может быть реализовано и аппаратно):
-эмулятор существует тактами, сопоставимыми тактам хоста. Такт делится на две
-фазы: сначала прочитываются все 64 инструкции из специальных позиций, затем
-исполняются все копирования (и сисколлы при обращении к каналу). Поэтому
-записи в специальные позиции — включая загрузку — действуют со следующего
-такта; порядок позиций внутри фаз безразличен, результат детерминирован,
-допустимо одновременное исполнение ядрами хоста.
-Пространство останавливается, если процессор заполнен NOPами (все `n`
-равны нулю): такой такт не исполняется. Самозавершение программы —
-копия, зануляющая `n`-поля записей инструкций (действует со следующего
-такта, как всякая запись в специальные позиции).
+The space is emulated in software (hardware emulation is also possible):
+the emulator lives in ticks matching host ticks. A tick has two
+phases: first read all 64 instructions from the special positions, then
+execute all copies (and syscalls on channel access). Therefore
+writes to special positions — including the load — take effect from the next
+tick; position order inside phases does not matter, the result is deterministic,
+simultaneous execution by host cores is allowed.
+The space stops when the processor is filled with NOPs (all `n`
+are zero): such a tick is never executed. Program self-stop is
+a copy zeroing the `n` fields of the instruction records (takes effect from
+the next tick, like every write to special positions).
 
-## 2. Использование для вычислений
+## 2. Use for computations
 
-1. **Функция = таблица значений.** Любое вычисление сводится к функциям,
-   а функция — к таблице (look-up table).
-2. **Вычисление = адресуемые копирования.** Вычислить функцию — значит
-   скопировать нужные строки из таблицы в нужные позиции.
-3. **Адресация = сортировка.** Адресуемые копирования выполняет механизм
-   сортировки: где бы ни находился индекс (уникальное значение), после
-   сортировки он займёт свою позицию — это и даёт абсолютную адресацию.
-   Перед сортировкой индексы раскладывают так, чтобы их упорядочивание
-   привело прикреплённые значения в требуемые места; к индексам прикреплены
-   бит данных и бит направления копирования.
-4. **Такт конвейерный:** пока настраивается адресация и идёт сортировка,
-   выполняются и такты вычисления из параллельных копирований.
+1. **Function = value table.** Every computation reduces to functions,
+   and a function reduces to a table (look-up table).
+2. **Computation = addressed copies.** To compute a function means
+   to copy the needed strings from the table to the needed positions.
+3. **Addressing = sorting.** A sorting mechanism performs addressed copies:
+   wherever an index (a unique value) is, after sorting
+   it takes its position — this gives absolute addressing.
+   Before sorting, indexes are laid out so that their ordering
+   brings the attached values to the required places; indexes carry
+   a data bit and a copy-direction bit.
+4. **Pipelined tick:** while addressing setup and index sorting run,
+   computation ticks of parallel copies also run.
 
-Данное демо (`space.c`) эмулирует само пространство напрямую —
-последовательно исполняя инструкции копирования; механизм сортировки-индексации
-живёт «виртуально» поверх него. Пространство достаточно для вычислений
-в смысле тезиса Тьюринга; требования, делающие его вычислительной системой,
-рассматриваются в следующих демо (см. оригинал, «демо 5»).
+This demo (`space.c`) emulates the space itself directly —
+executing copy instructions in sequence; the sort-and-index mechanism
+lives "virtually" above it. The space is enough for computations
+in the Turing thesis sense; the requirements making it a compute system
+are covered in later demos (see original, "demo 5").
 
-## 3. Состав репозитория
+## 3. Repository contents
 
-| Файл | Назначение |
+| File | Purpose |
 |---|---|
-| `space.h` / `globals.c` | формат `copy n,dst,src`, канал `LAST`, таблицы; размеры — флаги `-s`/`-p` |
-| `space.c` | точка входа: начальная инструкция и такты |
-| `config.c` | разбор флагов `-s`/`-p`/`-t`, проверка пределов |
-| `engine.c` | движок: двухфазный такт, канальные копирования через `LAST` |
-| `bitcopy.c` | побитовое копирование `bitcpy(n, src, s, dst, d)` |
-| `tests/` | сквозные проверки: загрузка (`boot.sh`), останов NOPами (`stop.sh`), размеры и флаги (`cfg.sh`), запросы состояния (`state.sh`); вход — `run_tests.sh` |
+| `space.h` / `globals.c` | `copy n,dst,src` format, `LAST` channel, tables; sizes come from `-s`/`-p` flags |
+| `space.c` | entry point: boot instruction and ticks |
+| `config.c` | parse flags `-s`/`-p`/`-t`, check limits |
+| `engine.c` | engine: two-phase tick, channel copies through `LAST` |
+| `bitcopy.c` | bitwise copy `bitcpy(n, src, s, dst, d)` |
+| `tests/` | end-to-end checks: load (`boot.sh`), NOP stop (`stop.sh`), sizes and flags (`cfg.sh`), state queries (`state.sh`); entry point is `run_tests.sh` |
 
-Формат инструкции: `n` (16 бит), `dst` (16 бит), `src` (16 бит),
-всего 48 бит. NOP — инструкция с 0 в поле `n`: ничего не копирует
-и никуда не обращается. Значения полей лежат в порядке байтов хоста
-(little-endian на x86: поле 8 — байты `08 00`); `bitcpy` переносит
-полевые байты как есть, поэтому записи непереносимы между концами. Стартовое ядро — одна инструкция загрузки
-(`N·48, 0, LAST`): все инструкции процессора из `stdin` в позиции процессора
-`[0, 48N)`. Использование: `space < user_space > result`;
-пользователь готовит поток (код и данные) сам; короткие чтения не
-останавливают (имеющееся кладётся, остальное не трогается).
-Первый такт: чтение ядра и загрузка; со второго — резидентная
-программа. Данные, буферы и код пользователя — вне `[0, 48N)`.
+Instruction format: `n` (16 bits), `dst` (16 bits), `src` (16 bits),
+48 bits total. NOP is an instruction with 0 in field `n`: it copies nothing
+and accesses nothing. Field values follow host byte order
+(little-endian on x86: field 8 means bytes `08 00`); `bitcpy` moves
+field bytes as they are, so records are not portable across ends. The boot core is one load instruction
+(`N·48, 0, LAST`): all processor instructions from `stdin` to processor
+positions `[0, 48N)`. Usage: `space < user_space > result`;
+the user prepares the stream (code and data); short reads never
+stop (available bytes are placed, the rest is untouched).
+First tick: core read and load; from the second tick the resident
+program runs. User data, buffers and code live outside `[0, 48N)`.
 
-## 4. Сборка и запуск
+## 4. Build and run
 
 ```sh
 make                # space
-make check          # + тесты (tests/run_tests.sh)
+make check          # + tests (tests/run_tests.sh)
 
-# использование: space [-s bits] [-p num] [-t ticks] < user_space > result.
-# по умолчанию: 65520 бит, 64 инструкции, без предела тактов.
-# пределы версии (в ширинах полей w_n, w_a; ныне 16, 16):
-# биты — 1..2^w_a; инструкций — не менее 1;
-# должны влезать запись инструкций плюс байт состояния канала вне её:
-# N <= (S-8)/(w_n+2w_a); нарушение — код 2.
-# Доказательство минимума: при N=1 запись занимает w_n+2w_a бит; байт
-# состояния (8 бит, соглашение) — вне процессора: S >= w_n+2w_a+8.
-# При нынешних ширинах: 48+8 = 56, S_min = 56 (`-s 56 -p 1`, скриптом
-# проверено, что строится; всё меньшее отклоняется);
-# при w_n=4, w_a=5: 14+8 = 22 (`-s 22 -p 1`: 4+5+5 записи плюс 8 бит).
-# Кратности размера, кроме вытекающей из содержимого, нет: массивы
-# выделяются с округлением вверх. Отсюда при нынешних ширинах N <= 1365.
+# usage: space [-s bits] [-p num] [-t ticks] < user_space > result.
+# defaults: 65520 bits, 64 instructions, no tick limit.
+# version limits (in field widths w_n, w_a; currently 16, 16):
+# bits: 1..2^w_a; instructions: at least 1;
+# the instruction record plus the channel state byte outside it must fit:
+# N <= (S-8)/(w_n+2w_a); violation means exit code 2.
+# Minimum proof: with N=1 the record takes w_n+2w_a bits; the state
+# byte (8 bits, by agreement) lives outside the processor: S >= w_n+2w_a+8.
+# With current widths: 48+8 = 56, S_min = 56 (`-s 56 -p 1`, script-checked
+# as buildable; everything smaller is rejected);
+# with w_n=4, w_a=5: 14+8 = 22 (`-s 22 -p 1`: 4+5+5 of record plus 8 bits).
+# No size multiple is required besides what the content implies: arrays
+# are allocated rounding up. Hence with current widths N <= 1365.
 
-# пример: пустой stdin — нечего читать (предел 1 такт), наружу ничего.
+# example: empty stdin, nothing to read (1 tick limit), no outward output.
 printf '' | ./space -t 1 | xxd
-# предел тактов флагом (нет флага — без предела); кривой флаг — код 2.
-{ printf '\010\000\000\040\357\377\010\000\020\040\000\040\010\000\357\377\020\040'; head -c 366 /dev/zero; printf 'Z'; } | ./space -t 2 | xxd   # наружу: 5A
-# пример: программа (ввод байта в [0x2000], копия в [0x2010], вывод наружу)
-# + байт 'Z'; полуинтервалы не пересекаются.
-# значения полей — в порядке байтов хоста (поле 8 — байты 08 00).
-# такт 1: исполняются ранее прочитанные инструкции (загрузка, тишина);
-# такт 2: ввод 'Z', копия, вывод 'Z'; такт 3: конец (предел 3 такта).
-# наружу: 5A 5A.
+# tick limit flag (no flag means no limit); bad flag means exit code 2.
+{ printf '\010\000\000\040\357\377\010\000\020\040\000\040\010\000\357\377\020\040'; head -c 366 /dev/zero; printf 'Z'; } | ./space -t 2 | xxd   # outward: 5A
+# example: program (input a byte to [0x2000], copy to [0x2010], output)
+# plus byte 'Z'; half-intervals do not overlap.
+# field values follow host byte order (field 8 means bytes 08 00).
+# tick 1 executes previously read instructions (load, silence);
+# tick 2: input 'Z', copy, output 'Z'; tick 3: end (3 tick limit).
+# outward: 5A 5A.
 { printf '\010\000\000\040\357\377\010\000\020\040\000\040\010\000\357\377\020\040'; head -c 366 /dev/zero; printf 'Z'; } | ./space -t 3 | xxd
-# пример: запросы состояния (программа из 7 троек + 'Q', предел 4 такта):
-# наружу 00 00 00, 00 01 00, 01 01 00 (см. tests/state.sh).
+# example: state queries (7-triple program + 'Q', 4 tick limit):
+# outward 00 00 00, 00 01 00, 01 01 00 (see tests/state.sh).
 ```
 
-## 5. Что исправлено относительно оригинала
+## 5. What was fixed relative to the original
 
-1. `space.h`: явный прототип `bitcpy`; таблицы — через `extern`
-   (определения в `globals.c`), пространство — `unsigned char`.
-2. `fetch_instruction`: цикл по `N_FIELDS` вместо `sizeof s` (= 6 вместо 3)
-   и запись в поле `[a]` вместо всегда `[0]`.
-3. Каналы переработаны в единственный канал `LAST` (последняя позиция):
-   канальные копирования — обычные инструкции в порядке следования, без
-   отдельной фазы и дескрипторов (`channels()` удалена); NOP — ноль
-   сисколлов; проверяется только полуинтервал внутри пространства
-   (полуинтервал со стороны `LAST` — снаружи по построению).
-   Неполные чтение и запись кладут имеющееся и не останавливают;
-   конец и сбои видны запросом состояния (см. п. 13).
-4. Непересекаемость полуинтервалов не проверяется (и в оригинале гарантий
-   не было): её обеспечивает программа, эмулятор на неё полагается.
-   Канальные полуинтервалы из правила не исключены, но их пересечения —
-   забота софта (рассматривается отдельно).
-5. `init`: битовая запись ядра строится побитовой упаковкой, а не сырым
-   `memcpy` разобранных `uint16_t` (зависимость от порядка байтов/бит);
-   само ядро — одна вычисляемая при запуске инструкция загрузки
-   `(N·48, 0, LAST)` вместо трёх троек: движок не меняется,
-   пользователь грузит код и данные сам.
-6. `get_argument`: не затирает длину копированием в тот же параметр.
-7. `computation`/`run_instruction`: проверки границ полуинтервалов
-   внутри пространства, пропуск NOP и `[n, LAST, LAST]`.
-8. `bitcopy.c`: написан заново начисто (искать автора не нужно);
-   три пути по положению полуинтервалов в байтах — при одинаковых позициях
-   (`memcpy` + края масками), короткие со сдвигом (64-битное слово),
-   длинные со сдвигом (цикл со сдвигом и переносом, по два байта
-   с независимыми вычислениями);
-   пересечения полуинтервалов не контролируются — копирований
-   «внахлёст» не бывает по устройству пространства;
-   проверки `NULL`/`n = 0`.
+1. `space.h`: explicit `bitcpy` prototype; tables through `extern`
+   (definitions in `globals.c`), space is `unsigned char`.
+2. `fetch_instruction`: loop over `N_FIELDS` instead of `sizeof s` (= 6 instead of 3)
+   and write to field `[a]` instead of always `[0]`.
+3. Channels reworked into the single `LAST` channel (last position):
+   channel copies are ordinary instructions in order, with no
+   separate phase and no descriptors (`channels()` removed); NOP means zero
+   syscalls; only the half-interval inside the space is checked
+   (the half-interval on the `LAST` side is outside by construction).
+   Short reads and writes place what is available and never stop;
+   end and failures are seen through a state query (see p. 13).
+4. Half-interval non-overlap is never checked (the original gave no guarantees
+   either): the program guarantees it, the emulator relies on it.
+   Channel half-intervals are not excluded from the rule, but their overlaps
+   are the software's concern (covered separately).
+5. `init`: the core bit record is built with bitwise packing, not raw
+   `memcpy` of parsed `uint16_t` (host byte order dependence);
+   the core itself is one load instruction computed at startup,
+   `(N·48, 0, LAST)`, instead of three triples: the engine never changes,
+   the user loads code and data alone.
+6. `get_argument`: never overwrites the length by copying into the same parameter.
+7. `computation`/`run_instruction`: half-interval bound checks
+   inside the space, skip of NOP and `[n, LAST, LAST]`.
+8. `bitcopy.c`: written from scratch;
+   three paths by half-interval position inside bytes — with equal positions
+   (`memcpy` plus edges with masks), short shifted copies (64-bit word),
+   long shifted copies (shift-and-carry loop, two bytes at a time
+   with independent computations);
+   half-interval overlaps are never checked — overlapping copies
+   never occur by space device;
+   `NULL`/`n = 0` checks.
+9. User data and buffers live outside instruction records `[0, 48N)`:
+   the old core held the input buffer inside instruction 0 record, and input
+   wrote over its `src` field, disarming the channel from the second tick.
+10. Two-phase tick (read all instructions, then execute all
+    copies) instead of interleaving: writes to special positions take effect
+    from the next tick; boot triple placement does not matter
+    (zero position by agreement); order does not matter, simultaneous
+    execution by host cores is allowed.
+11. Sizes and limit come from flags (`-s` bits, `-p` instructions, `-t` ticks),
+    removed from C code so the emulator needs no rebuild (`LIFE` removed,
+    `processor`/`space` tables and the core triple are allocated dynamically;
+    no flag means defaults (65520, 64, no limit);
+    bad flag means exit code 2. The boot triple of the core is computed at startup.
+    There are no channel stops: short reads never stop,
+    end and failures are seen through a state query (see p. 13).
+12. Stop on NOP-filled processor: `computation` returns state
+    (1 if at least one non-NOP instruction was present, else 0 with no execution);
+    the loop stops when all `n` are zero. Check —
+    `tests/stop.sh`: the program zeroes its own instruction record and outputs
+    zero — exactly one byte outward.
+13. Channel NOPs: `[0, dst, LAST]` writes 8 read-side state bits
+    to `[dst, dst+8)`, `[0, LAST, src]` writes 8 write-side state bits
+    to `[src, src+8)` (bit 0 means end/failure, the rest is zero, reserved;
+    target lies outside the processor). State is read from sticky `stdio`
+    flags at query time, there is no separate storage. A query never touches the stream.
+    `SIGPIPE` is ignored, so an output failure is seen in the bit instead of killing
+    the process. Short reads and writes require repeated channel access;
+    after every access the user checks the state with a channel NOP. Check — `tests/state.sh`.
 
-9. Данные и буферы программы — вне записей инструкций `[0, 48N)`:
-   прежнее ядро держало буфер ввода внутри записи инструкции 0, и ввод
-   писал поверх её `src`-поля, разоружая канал со второго такта.
-10. Такт двухфазный (чтение всех инструкций, затем исполнение всех
-    копирований) вместо чередования: записи в специальные позиции действуют
-    со следующего такта; размещение загрузочной тройки безразлично
-    (нулевая позиция — по соглашению); порядок безразличен, допустимо
-11. Размеры и предел — флагами (`-s` биты, `-p` инструкции, `-t` такты),
-    из си-кода убраны, чтобы не перекомпилировать эмулятор (`LIFE` удалена,
-    таблицы `processor`/`space` выделяются динамически, тройка ядра вычисляется;
-    нет флага — значения по умолчанию (65520, 64, без предела);
-    кривой флаг — код 2. Начальная тройка ядра вычисляется при запуске.
-    Остановов по каналу нет: короткие чтения не останавливают,
-    конец и сбои видны запросом состояния (см. п. 13).
-12. Останов заполненностью NOPами: `computation` возвращает состояние
-    (1 если была хоть одна не-NOP инструкция, иначе 0 без исполнения);
-    цикл останавливается, когда все `n` равны нулю. Проверка —
-    `tests/stop.sh`: программа зануляет свою запись инструкций и выводит
-    ноль — наружу ровно один байт.
-13. Канальные NOP: `[0, dst, LAST]` пишет 8 бит состояния стороны
-    чтения в `[dst, dst+8)`, `[0, LAST, src]` — 8 бит состояния стороны
-    записи в `[src, src+8)` (бит 0 — конец/сбой, остальное — нули, резерв;
-    цель — вне процессора). Состояние считывается с липких флагов `stdio`
-    в момент запроса, отдельного хранилища нет. Запрос поток не трогает.
-    `SIGPIPE` глушится, чтобы сбой вывода наблюдался в бите, а не убивал
-    процесс. Неполные чтение и запись требуют повторного обращения
-    к каналу; после каждого обращения пользователь проверяет состояние
-    канальным NOPом. Проверка — `tests/state.sh`.
-
-Лицензия: MIT (как у оригинала).
+License: MIT (as in the original).
