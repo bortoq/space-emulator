@@ -61,9 +61,9 @@ void parse_config(int argc, char **argv)
     fprintf(stderr, "space: need at least 1 instruction (-p)\n");
     usage();
   }
-  if(space_nbits < CHAR_BIT || space_nbits % CHAR_BIT || space_nbits > SPACE_BITS_MAX)
+  if(space_nbits < 1 || space_nbits > (1ULL << ADDRESS_SIZE))
   {
-    fprintf(stderr, "space: bits must be a nonzero multiple of 8 up to 65536 (-s)\n");
+    fprintf(stderr, "space: bits must be 1..%llu (-s)\n", 1ULL << ADDRESS_SIZE);
     usage();
   }
   if(space_nbits < 8 || proc_n > (space_nbits - 8) / INSTRUCTION_SIZE)

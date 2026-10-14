@@ -142,11 +142,10 @@ static unsigned char output_state(void)
   return st;
 }
 
-/* цель запроса (8 бит) обязана лежать вне процессора */
+/* цель запроса (8 бит) обязана влезать и лежать вне процессора.
+   выравнивание не требуется: пишет bitcpy */
 static inline int query_ok(size addr_bits)
 {
-  if(addr_bits % CHAR_BIT != 0)
-    return 0;
   if((size_t)addr_bits + 8 > space_nbits)
     return 0;
   if((size_t)addr_bits < proc_n * INSTRUCTION_SIZE)
@@ -170,12 +169,14 @@ void run_instruction(size i)
     last = (size)(space_nbits - 1);
     if(src == last && dst != last && query_ok(dst))
     {
-      space[dst / CHAR_BIT] = input_state();
+      unsigned char st = input_state();
+      bitcpy(8, &st, 0, space, dst);
       return;
     }
     if(dst == last && src != last && query_ok(src))
     {
-      space[src / CHAR_BIT] = output_state();
+      unsigned char st = output_state();
+      bitcpy(8, &st, 0, space, src);
       return;
     }
     return;
@@ -227,14 +228,14 @@ void init_space(void)
   signal(SIGPIPE, SIG_IGN);
 #endif
   init_channels();
-  space = malloc(space_nbits / CHAR_BIT);
+  space = malloc((space_nbits + CHAR_BIT - 1) / CHAR_BIT);
   processor = malloc(proc_n * sizeof *processor);
   if(space == NULL || processor == NULL)
   {
     fprintf(stderr, "space: out of memory\n");
     exit(1);
   }
-  memset(space, 0, space_nbits / CHAR_BIT);
+  memset(space, 0, (space_nbits + CHAR_BIT - 1) / CHAR_BIT);
   memset(processor, 0, proc_n * sizeof *processor);
   boot_n = (size)(proc_n * INSTRUCTION_SIZE);
   boot_last = (size)(space_nbits - 1);

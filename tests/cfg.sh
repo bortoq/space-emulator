@@ -16,6 +16,10 @@ echo "ok: -s 392 -p 8 (загрузка, останов NOPами)"
 { head -c 6 /dev/zero; } | timeout 5 ./space -s 56 -p 1 > /tmp/cfg_min.out
 test ! -s /tmp/cfg_min.out
 echo "ok: -s 56 -p 1 (наименьшее пространство)"
+# некратное 8 тоже строится (лишний хвост байта не адресуется).
+{ head -c 6 /dev/zero; } | timeout 5 ./space -s 60 -p 1 > /tmp/cfg_odd.out
+test ! -s /tmp/cfg_odd.out
+echo "ok: -s 60 -p 1 (размер без кратности 8)"
 # явные значения по умолчанию совпадают с неявными (ZZ как в boot.sh).
 { printf '\010\000\000\040\357\377\010\000\020\040\000\040\010\000\357\377\020\040'; head -c 366 /dev/zero; printf 'Z'; } | timeout 5 ./space -s 65520 -p 64 -t 3 > /tmp/cfg_dflt.out
 printf '\132\132' > /tmp/cfg_expected.out

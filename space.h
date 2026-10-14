@@ -26,7 +26,6 @@
 enum {
   SPACE_BITS_DFLT = 0xFFF0,       /* -s по умолчанию (бит) */
   PROC_N_DFLT = 64,               /* -p по умолчанию (инструкций) */
-  SPACE_BITS_MAX = 0x10000,       /* наибольший размер (позиции 16-битные) */
   N_SIZE = 16,                    /* бит в поле "n" инструкции */
   ADDRESS_SIZE = 16,              /* бит в поле "dst" (у "src" столько же) */
   INSTRUCTION_SIZE = 16 + 2 * 16, /* бит в инструкции "copy n, dst, src" (> 10) */
@@ -35,15 +34,18 @@ enum {
 };
 
 /* limits (проверяются при запуске):
-   space_nbits % CHAR_BIT == 0 (массивы побайтовые, точные),
-   space_nbits <= SPACE_BITS_MAX (позиции адресуются 16 битами),
+   1 <= space_nbits <= 2^ADDRESS_SIZE (позиции адресуются полями),
    proc_n >= 1, space_nbits >= proc_n * INSTRUCTION_SIZE + 8
    (инструкции процессора плюс байт состояния канала вне их).
    Делением без переполнения: proc_n <= (space_nbits - 8) / INSTRUCTION_SIZE.
-   Отсюда proc_n <= 1365 < 65535: индекса `size` достаточно везде. */
+   Кратности размера, кроме вытекающей из содержимого, нет: массивы
+   выделяются с округлением вверх, лишние биты последнего байта
+   не адресуются. При нынешних ширинах отсюда proc_n <= 1365 < 65535:
+   индекса `size` достаточно везде. */
 
 /* types */
 typedef uint16_t  size;           /* large enough for instruction argument */
+_Static_assert(N_SIZE <= 16 && ADDRESS_SIZE <= 16, "fields fit size");
 
 /* configuration (-s, -p, -t; определения — в globals.c) */
 extern size_t space_nbits;        /* бит в пространстве */
