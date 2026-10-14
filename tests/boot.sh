@@ -1,6 +1,7 @@
 #!/bin/sh
 # Проверка загрузки и исполнения собранного эмулятора через stdin/stdout.
-# Программа: (8,0x2000,LAST), (8,LAST,0x2000), 62 нулевые тройки, затем 'Z'.
+# Программа: (8,0x2000,LAST), (8,0x2010,0x2000), (8,LAST,0x2010),
+# 61 нулевая тройка — затем 'Z'. Полуинтервалы не пересекаются.
 # Значения полей — в порядке байтов хоста (поле 8 — байты 08 00).
 set -e
 cd "$(dirname "$0")/.."
@@ -11,7 +12,7 @@ fi
 printf '' | ./space > /tmp/boot_empty.out
 test ! -s /tmp/boot_empty.out
 echo "ok: пустой stdin — тишина и halt"
-{ printf '\010\000\000\040\357\377\010\000\357\377\000\040'; head -c 372 /dev/zero; printf 'Z'; } | timeout 5 ./space > /tmp/boot_run.out
+{ printf '\010\000\000\040\357\377\010\000\020\040\000\040\010\000\357\377\020\040'; head -c 366 /dev/zero; printf 'Z'; } | timeout 5 ./space > /tmp/boot_run.out
 printf '\132\132' > /tmp/boot_expected.out
 cmp /tmp/boot_run.out /tmp/boot_expected.out
 echo "ok: такт загрузки, такт исполнения (ZZ), такт EOF и halt"

@@ -11,7 +11,4 @@ $CC $CFLAGS -o space space.c engine.c globals.c bitcopy.c
 echo "== загрузка и исполнение =="
 ./tests/boot.sh
 
-echo "== несколько каналов в такте =="
-./tests/multi.sh
-
 echo "ВСЕ ПРОВЕРКИ ПРОШЛИ"
