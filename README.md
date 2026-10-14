@@ -1,8 +1,5 @@
 # Positional address space emulator
 
-This is a fixed version of demo `demo1` from `/media/user/PROJECT/work/model/s1/demo1/`
-(original author: dmitri bortoq, 2022–2024, MIT). The idea comes from
-`demo1.readme.rus.txt` and `demo1.readme2.rus.txt`.
 
 ## 1. Space device
 
