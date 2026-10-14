@@ -1,4 +1,4 @@
-/* unit-тесты bitcpy: выравнивания, границы, перекрытия, guard-случаи */
+/* Проверки bitcpy: одинаковые и разные позиции в байте, границы, nop */
 #include <stdio.h>
 #include <string.h>
 #include <limits.h>
@@ -45,7 +45,7 @@ int main()
   bitcpy(0, src, 0, dst, 0);
   bitcpy(10, NULL, 0, dst, 0);
   bitcpy(10, src, 0, NULL, 0);
-  CHECK(1, "guards (n=0, NULL) no crash");
+  CHECK(1, "n=0 and NULL do nothing");
 
   /* выровненные и невыровненные копии против эталона */
   memset(src, 0, sizeof src);
@@ -68,7 +68,7 @@ int main()
       break;
     }
   }
-  CHECK(fails == 0, "aligned/misaligned vs reference (300 cases)");
+  CHECK(fails == 0, "equal and differing bit offsets vs reference (300 cases)");
 
   /* в точности через границу байта, хвост < 8 бит */
   {
@@ -100,7 +100,7 @@ int main()
   }
 
   if(fails == 0)
-    printf("ALL TESTS PASSED\n");
+    printf("ALL BITCOPY CHECKS PASSED\n");
   else
     printf("%d FAILURES\n", fails);
   if(fails)

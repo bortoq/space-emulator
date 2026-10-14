@@ -38,7 +38,7 @@ static inline void fetch_instruction(size i)
     processor[i][a] = get_argument(PROCESSOR_START + i * INSTRUCTION_SIZE + o[a], s[a]);
 }
 
-/* save parsed instruction to the bit image (init) */
+/* write parsed instruction bit string to special positions (init) */
 static inline void store_instruction(size i, size n, size dst, size src)
 {
   if(i >= PROCESSOR_N)
@@ -122,7 +122,7 @@ int space_output(size n_bits, size addr_bits, FILE *f)
 }
 
 /* execute the already fetched i-th instruction:
-   ordinary copy or single channel transfer (unit of parallel work) */
+   ordinary copy or single channel transfer */
 void run_instruction(size i)
 {
   size n, dst, src;
@@ -151,7 +151,8 @@ void run_instruction(size i)
 }
 
 /* one tick: first read all instructions, then execute all copies.
-   дорабатываем такт и при halted */
+   такт исполняется до конца и при halted; канальные обращения идут
+   в порядке инструкций, так как stdin/stdout последовательны */
 void computation(void)
 {
   size i;
@@ -161,7 +162,7 @@ void computation(void)
     run_instruction(i);
 }
 
-/* build bit image of the single boot instruction */
+/* write the single boot instruction bit string */
 void init_space(void)
 {
   init_channels();

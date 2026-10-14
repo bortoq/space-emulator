@@ -36,7 +36,7 @@ enum {
   PROCESSOR_START = 0,            /* битовый индекс первой инструкции */
   N_FIELDS = 3,                   /* полей в инструкции: n, dst, src */
   LAST = SPACE_SIZE - 1,          /* единственный канал: последняя позиция */
-  PROC_IMAGE = PROCESSOR_N * INSTRUCTION_SIZE /* бит в образе процессора */
+  PROC_IMAGE = PROCESSOR_N * INSTRUCTION_SIZE /* бит в 64 инструкциях процессора */
 };
 
 /* types */
@@ -64,7 +64,7 @@ extern FILE *channel_in;         /* поток ввода (по умолчани
 extern FILE *channel_out;        /* поток вывода (по умолчанию stdout) */
 void run_instruction(size i);    /* исполнить i-ю инструкцию (копия или канал) */
 void computation(void);          /* один такт: все инструкции подряд */
-void init_space(void);           /* образ ядра, таблица процессора, каналы */
+void init_space(void);           /* начальная инструкция, таблица, каналы */
 int space_input(size n_bits, size addr_bits, FILE *f);  /* f -> space, 0 ok */
 int space_output(size n_bits, size addr_bits, FILE *f); /* space -> f, 0 ok */
 
