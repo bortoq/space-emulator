@@ -17,15 +17,17 @@ echo "== unit: channels =="
 ./tests/test_channels
 
 echo "== smoke: space =="
-# пустой stdin: ввод сразу в EOF — такт дорабатывается (1 нулевой байт наружу), halt
+# пустой stdin: загрузке нечего читать — halt, в ROM вывода нет (тишина)
 printf '' | ./space > /tmp/space_empty.out
-head -c 1 /dev/zero > /tmp/space_one_zero
-cmp /tmp/space_empty.out /tmp/space_one_zero
-echo "empty stdin OK (tick finished, 1 zero byte, halt)"
-# 'Hi!': 3 такта по байту + EOF-такт — наружу 4 нулевых байта
-printf 'Hi!' | timeout 5 ./space > /tmp/space_io.out
-head -c 4 /dev/zero > /tmp/space_four_zero
-cmp /tmp/space_io.out /tmp/space_four_zero
-echo "io smoke OK (4 zero bytes)"
+test ! -s /tmp/space_empty.out
+echo "empty stdin OK (no output, halt)"
+# программа: (8,0x2000,LAST), (8,LAST,0x2000), нули — потом 'Z'.
+# такт 1: двухфазно — исполняется старый образ (загрузка, тишина);
+# такт 2: ввод 'Z' + вывод 'Z'; такт 3: EOF — доработать (вывод 'Z') и halt.
+# наружу: 5A 5A.
+{ printf '\010\000\000\040\357\377\010\000\357\377\000\040'; head -c 372 /dev/zero; printf 'Z'; } | timeout 5 ./space > /tmp/space_io.out
+printf '\132\132' > /tmp/space_expected.out
+cmp /tmp/space_io.out /tmp/space_expected.out
+echo "boot+run smoke OK (5A 5A)"
 
 echo "ALL CHECKS PASSED"

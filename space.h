@@ -35,7 +35,8 @@ enum {
   INSTRUCTION_SIZE = 16 + 2 * 16, /* бит в инструкции "copy n, dst, src" (> 10) */
   PROCESSOR_START = 0,            /* битовый индекс первой инструкции */
   N_FIELDS = 3,                   /* полей в инструкции: n, dst, src */
-  LAST = SPACE_SIZE - 1           /* единственный канал: последняя позиция */
+  LAST = SPACE_SIZE - 1,          /* единственный канал: последняя позиция */
+  PROC_IMAGE = PROCESSOR_N * INSTRUCTION_SIZE /* бит в образе процессора */
 };
 
 /* types */
@@ -54,8 +55,8 @@ extern unsigned char space[SPACE_SIZE / CHAR_BIT]; /* data bits of the bit space
 extern const size o[N_FIELDS];
 extern const size s[N_FIELDS];
 
-/* стартовое ядро: 3 разобранные инструкции (n, dst, src) */
-extern const size core[9];
+/* стартовое ядро: одна инструкция загрузки (n, dst, src) */
+extern const size core[3];
 
 /* ENGINE */
 extern int halted;               /* 1 после конца ввода/ошибки: доработать такт и встать */

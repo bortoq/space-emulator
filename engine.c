@@ -1,12 +1,15 @@
 /*
  * ADDRESS SPACE ENGINE (single channel version)
  *
- * Каждый такт подряд исполняет PROCESSOR_N инструкций
- * "copy n, dst, src" над битовым пространством space.
+ * Каждый такт делится на две фазы: сначала прочитываются все
+ * PROCESSOR_N инструкций "copy n, dst, src" из специальных позиций,
+ * затем исполняются все копирования над битовым пространством space.
  * Инструкция с первой позицией полуинтервала источника LAST —
  * ввод (stdin -> пространство), с первой позицией полуинтервала
  * приёмника LAST — вывод (пространство -> stdout); остальное —
- * обычные внутренние копирования. Непересекаемость полуинтервалов
+ * обычные внутренние копирования. Записи в специальные позиции
+ * (включая загрузку) действуют со следующего такта; порядок позиций
+ * внутри фаз безразличен. Непересекаемость полуинтервалов
  * не проверяется: её обеспечивает программа, эмулятор на неё полагается.
  */
 #include "space.h"
@@ -118,13 +121,13 @@ int space_output(size n_bits, size addr_bits, FILE *f)
   return 0;
 }
 
-/* execute the i-th instruction: ordinary copy or single channel transfer */
+/* execute the already fetched i-th instruction:
+   ordinary copy or single channel transfer (unit of parallel work) */
 void run_instruction(size i)
 {
   size n, dst, src;
   if(i >= PROCESSOR_N)
     return;
-  fetch_instruction(i);
   n = processor[i][0];
   dst = processor[i][1];
   src = processor[i][2];
@@ -147,26 +150,25 @@ void run_instruction(size i)
   bitcpy(n, space, src, space, dst);
 }
 
-/* one tick: all instructions in a row (дорабатываем такт и при halted) */
+/* one tick: first read all instructions, then execute all copies.
+   дорабатываем такт и при halted */
 void computation(void)
 {
   size i;
   for(i = 0; i < PROCESSOR_N; ++i)
+    fetch_instruction(i);
+  for(i = 0; i < PROCESSOR_N; ++i)
     run_instruction(i);
 }
 
-/* build bit image of the core and the first processor table */
+/* build bit image of the single boot instruction */
 void init_space(void)
 {
-  size i;
   init_channels();
   memset(space, 0, sizeof space);
   memset(processor, 0, sizeof processor);
-  for(i = 0; i < 3; ++i)
-  {
-    processor[i][0] = core[i * 3];
-    processor[i][1] = core[i * 3 + 1];
-    processor[i][2] = core[i * 3 + 2];
-    store_instruction(i, core[i * 3], core[i * 3 + 1], core[i * 3 + 2]);
-  }
+  processor[0][0] = core[0];
+  processor[0][1] = core[1];
+  processor[0][2] = core[2];
+  store_instruction(0, core[0], core[1], core[2]);
 }

@@ -43,6 +43,14 @@ static void write_image(size_t i, size n, size dst, size src)
   bitcpy(s[2], &src, 0, space, INSTRUCTION_SIZE * i + o[2]);
 }
 
+/* тройка (n, dst, src) в буфер buf со смещением i-й инструкции */
+static void pack_to(unsigned char *buf, size_t i, size n, size dst, size src)
+{
+  bitcpy(s[0], &n, 0, buf, INSTRUCTION_SIZE * i + o[0]);
+  bitcpy(s[1], &dst, 0, buf, INSTRUCTION_SIZE * i + o[1]);
+  bitcpy(s[2], &src, 0, buf, INSTRUCTION_SIZE * i + o[2]);
+}
+
 int main()
 {
   FILE *f;
@@ -55,10 +63,10 @@ int main()
   channel_out = NULL;
   init_space();
   CHECK(channel_in == stdin && channel_out == stdout, "core wires stdio");
-  CHECK(processor[0][0] == 8 && processor[0][1] == 0x2000 && processor[0][2] == LAST,
-    "core[0] is channel in");
-  CHECK(processor[1][0] == 8 && processor[1][1] == LAST && processor[1][2] == 0x2010,
-    "core[1] is channel out");
+  CHECK(processor[0][0] == PROC_IMAGE && processor[0][1] == PROCESSOR_START
+    && processor[0][2] == LAST, "core[0] is boot load");
+  CHECK(processor[1][0] == 0 && processor[1][1] == 0 && processor[1][2] == 0,
+    "core[1] is nop");
 
   /* назначенные потоки init_space не трогает */
   f = make_input("keeper", 6);
@@ -124,25 +132,33 @@ int main()
   memset(space, 0, sizeof space);
   memset(processor, 0, sizeof processor);
   write_image(5, 8, 0x2100, LAST);
-  run_instruction(5);
+  halted = 0;
+  computation();
   CHECK(space[0x2100 / 8] == 'Z' && !halted, "dispatch input");
 
   /* диспетчер: [n, LAST, src] — вывод того же байта */
   f = tmpfile();
   CHECK(f != NULL, "tmpfile Q");
   channel_out = f;
+  memset(space, 0, sizeof space);
+  memset(processor, 0, sizeof processor);
   write_image(6, 8, LAST, 0x2100);
-  run_instruction(6);
+  space[0x2100 / 8] = 'Z';
+  halted = 0;
+  computation();
   n = read_all(channel_out, buf, sizeof buf);
   CHECK(n == 1 && buf[0] == 'Z' && !halted, "dispatch output");
 
   /* [n, LAST, LAST] и n == 0 с LAST — nop без касаний */
+  memset(space, 0, sizeof space);
+  memset(processor, 0, sizeof processor);
   pos = ftell(channel_in);
   pos2 = ftell(channel_out);
   write_image(7, 8, LAST, LAST);
-  run_instruction(7);
+  halted = 0;
+  computation();
   write_image(7, 0, LAST, 0x2140);
-  run_instruction(7);
+  computation();
   CHECK(ftell(channel_in) == pos && ftell(channel_out) == pos2, "degenerate untouched");
   CHECK(!halted, "degenerate no halt");
 
@@ -153,33 +169,48 @@ int main()
   f = tmpfile();
   CHECK(f != NULL, "tmpfile HI out");
   channel_out = f;
+  memset(space, 0, sizeof space);
+  memset(processor, 0, sizeof processor);
   write_image(7, 16, 0x2140, LAST);
   write_image(8, 16, LAST, 0x2140);
-  run_instruction(7);
-  run_instruction(8);
+  halted = 0;
+  computation();
   n = read_all(channel_out, buf, sizeof buf);
   CHECK(n == 2 && memcmp(buf, "HI", 2) == 0 && !halted, "overlap pipe-through");
 
-  /* ядро end-to-end: тройки core работают как обычные инструкции */
-  init_space();
-  f = make_input("Q", 1);
-  CHECK(f != NULL, "tmpfile Q2");
-  channel_in = f;
-  f = tmpfile();
-  CHECK(f != NULL, "tmpfile zero");
-  channel_out = f;
-  halted = 0;
-  run_instruction(0);
-  CHECK(space[0x2000 / 8] == 'Q', "core in landed");
-  /* образ не испорчен вводом: второй такт — снова ввод */
-  f = make_input("W", 1);
-  CHECK(f != NULL, "tmpfile W");
-  channel_in = f;
-  run_instruction(0);
-  CHECK(space[0x2000 / 8] == 'W', "channel still armed");
-  run_instruction(1);
-  n = read_all(channel_out, buf, sizeof buf);
-  CHECK(n == 1 && buf[0] == 0 && !halted, "core out zero");
+  /* boot end-to-end: поток 384 байта + 'Z', три такта */
+  {
+    unsigned char stream[PROC_IMAGE / 8];
+    memset(stream, 0, sizeof stream);
+    pack_to(stream, 0, 8, 0x2000, LAST);
+    pack_to(stream, 1, 8, LAST, 0x2000);
+    f = tmpfile();
+    CHECK(f != NULL, "tmpfile stream");
+    CHECK(fwrite(stream, 1, sizeof stream, f) == sizeof stream, "stream written");
+    CHECK(fwrite("Z", 1, 1, f) == 1, "payload written");
+    rewind(f);
+    channel_in = f;
+    f = tmpfile();
+    CHECK(f != NULL, "tmpfile boot out");
+    channel_out = f;
+    memset(space, 0, sizeof space);
+    memset(processor, 0, sizeof processor);
+    init_space();
+    halted = 0;
+    computation();
+    CHECK(!halted, "boot tick clean");
+    computation();
+    CHECK(space[0x2000 / 8] == 'Z', "boot input landed");
+    CHECK(processor[1][0] == 8 && processor[1][1] == LAST
+      && processor[1][2] == 0x2000, "image took effect");
+    n = read_all(channel_out, buf, sizeof buf);
+    CHECK(n == 1 && buf[0] == 'Z', "boot output echoed");
+    computation();
+    CHECK(halted, "halt after stream end");
+    n = read_all(channel_out, buf, sizeof buf);
+    CHECK(n == 2 && buf[0] == 'Z' && buf[1] == 'Z', "eof tick finished");
+    halted = 0;
+  }
 
   /* кривой канальный адрес через диспетчер: пропуск */
   memset(space, 0, sizeof space);
@@ -190,7 +221,7 @@ int main()
   channel_in = f;
   pos = ftell(channel_in);
   halted = 0;
-  run_instruction(10);
+  computation();
   CHECK(ftell(channel_in) == pos && !halted, "dispatch bad addr skipped");
 
   /* такт дорабатывается и при halted */
