@@ -51,6 +51,7 @@ check_err() {
 }
 check_err ./space -s 21 -p 1 < /dev/null
 check_err ./space -s 22 -p 1 < /dev/null
+check_err ./space -s 25 -p 1 < /dev/null
 check_err ./space -s 4 -p 1 < /dev/null
 check_err ./space -s 100000 < /dev/null
 check_err ./space -p 0 < /dev/null

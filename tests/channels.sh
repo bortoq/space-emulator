@@ -39,6 +39,24 @@ echo "ok: query count after a complete input (00 08)"
 printf '\001\010' > /tmp/ch_count_part_expected.out
 cmp /tmp/ch_count_part.out /tmp/ch_count_part_expected.out
 echo "ok: query count after an incomplete input (01 08)"
+# write-side count: output 8 bits, then query the write state and count.
+# The first byte is the program's own first byte (0x10), then 00 08.
+{ printf '\020\341\200\000\070\142\301\016\030\260\103\206\034'; } | timeout 5 ./space -s 392 -p 4 -t 2 > /tmp/ch_count_out.out
+printf '\020\000\010' > /tmp/ch_count_out_expected.out
+cmp /tmp/ch_count_out.out /tmp/ch_count_out_expected.out
+echo "ok: query count after an output (10 00 08)"
+# a query inside the processor does not write: output from position 3
+# reads program bits 00000110 -> 06
+{ printf '\000\300\160\304\070\170\000\000\000\000\000\000\000'; } | timeout 5 ./space -s 392 -p 4 -t 2 > /tmp/ch_inside.out
+printf '\006' > /tmp/ch_inside_expected.out
+cmp /tmp/ch_inside.out /tmp/ch_inside_expected.out
+echo "ok: query inside the processor does not write (06)"
+# count above 255 at -s 1024 (count field 9 bits, low byte first):
+# input 300 bits -> state 00 and count 2C 01
+{ printf '\064\200\037\370\000\270\377\304\037\371\160\020\377\317\200'; head -c 38 /dev/zero | tr '\\000' '\\252'; } | timeout 5 ./space -s 1024 -p 4 -t 2 > /tmp/ch_count_big.out
+printf '\000\054\001' > /tmp/ch_count_big_expected.out
+cmp /tmp/ch_count_big.out /tmp/ch_count_big_expected.out
+echo "ok: query count above 255 (00 2C 01)"
 # write failure: /dev/full (ENOSPC) runs without crash and without hang
 { printf '\020\000\160\300\005\234\061\016\030\260\000\000\000'; } | timeout 5 ./space -s 392 -p 4 -t 3 > /dev/full 2>/dev/null || true
 echo "ok: write to /dev/full runs without crash"

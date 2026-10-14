@@ -75,19 +75,19 @@ static inline void store_argument(size n, size value, size at)
 }
 
 /* write the transfer count as bytes after the state
-   (low byte of the value first, bit 0 of a byte is the high bit) */
+   (low byte of the value first, bit 0 of a byte is the high bit;
+   unused top bits of the last byte are zero) */
 static inline void store_count(size at, size value)
 {
-  size b = 0;
-  size total = (size)(nfield_bits + CHAR_BIT - 1) / CHAR_BIT;
-  while(b < total)
-  {
-    unsigned char byte = (unsigned char)((value >> (b * CHAR_BIT)) & 0xFF);
-    size left = (size)(nfield_bits - b * CHAR_BIT);
-    size w = left < CHAR_BIT ? left : (size)CHAR_BIT;
-    bitcpy(w, &byte, 0, space, (size)(at + b * CHAR_BIT));
-    ++b;
-  }
+  size bytes_total = (size)(nfield_bits + CHAR_BIT - 1) / CHAR_BIT;
+  size bits_total = (size)(bytes_total * CHAR_BIT);
+  size k;
+  for(k = 0; k < bits_total; ++k)
+    space_set_bit((size_t)(at + k), 0);
+  for(k = 0; k < nfield_bits; ++k)
+    if((value >> k) & 1)
+      space_set_bit((size_t)(at + (k / CHAR_BIT) * CHAR_BIT
+        + (CHAR_BIT - 1 - k % CHAR_BIT)), 1);
 }
 
 /* read "i-th instruction" bit string from bit space to the processor mechanism */
