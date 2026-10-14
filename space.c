@@ -20,8 +20,8 @@ int main(int argc, char **argv)
 
   init_space();
 
-  /* emulate computation (такт до конца и при halted) */
-  while(!halted && (tick_limit == 0 || time--))
+  /* emulate computation (останов: все NOP или предел тактов) */
+  while((tick_limit == 0 || time--))
     if(!computation())
       break;
 

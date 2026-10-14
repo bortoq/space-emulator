@@ -14,8 +14,10 @@
  * не проверяется: её обеспечивает программа, эмулятор на неё полагается.
  */
 #include "space.h"
+#ifdef SIGPIPE
+#include <signal.h>
+#endif
 
-int halted = 0;
 FILE *channel_in = NULL;
 FILE *channel_out = NULL;
 
@@ -71,7 +73,7 @@ static inline void init_channels(void)
 }
 
 /* copy n_bits from f to the half-interval [addr_bits, addr_bits + n_bits).
-   return 0 if ok, -1 if skipped or short (short sets halted) */
+   return 0 if full, -1 if skipped or short (конец/сбой видны запросом) */
 int space_input(size n_bits, size addr_bits, FILE *f)
 {
   size_t n_bytes;
@@ -89,15 +91,12 @@ int space_input(size n_bits, size addr_bits, FILE *f)
     return -1;
   done = fread(&space[addr_bits / CHAR_BIT], 1, n_bytes, f);
   if(done != n_bytes)
-  {
-    halted = 1;
     return -1;
-  }
   return 0;
 }
 
 /* copy n_bits from the half-interval [addr_bits, addr_bits + n_bits) to f.
-   return 0 if ok, -1 if skipped or short (short sets halted) */
+   return 0 if full, -1 if skipped or short (конец/сбой видны запросом) */
 int space_output(size n_bits, size addr_bits, FILE *f)
 {
   size_t n_bytes;
@@ -115,15 +114,49 @@ int space_output(size n_bits, size addr_bits, FILE *f)
     return -1;
   done = fwrite(&space[addr_bits / CHAR_BIT], 1, n_bytes, f);
   if(done != n_bytes)
-  {
-    halted = 1;
     return -1;
-  }
   return 0;
 }
 
+/* байт состояния стороны чтения: бит 0 — встречен конец ввода,
+   бит 1 — сбой ввода (липкие флаги stdio, запрос их не сбрасывает) */
+static unsigned char input_state(void)
+{
+  unsigned char st = 0;
+  if(channel_in != NULL)
+  {
+    if(feof(channel_in))
+      st |= 0x01;
+    if(ferror(channel_in))
+      st |= 0x02;
+  }
+  return st;
+}
+
+/* байт состояния стороны записи: бит 0 — сбой вывода */
+static unsigned char output_state(void)
+{
+  unsigned char st = 0;
+  if(channel_out != NULL && ferror(channel_out))
+    st |= 0x01;
+  return st;
+}
+
+/* цель запроса (8 бит) обязана лежать вне процессора */
+static inline int query_ok(size addr_bits)
+{
+  if(addr_bits % CHAR_BIT != 0)
+    return 0;
+  if((size_t)addr_bits + 8 > space_nbits)
+    return 0;
+  if((size_t)addr_bits < proc_n * INSTRUCTION_SIZE)
+    return 0;
+  return 1;
+}
+
 /* execute the already fetched i-th instruction:
-   ordinary copy or single channel transfer */
+   ordinary copy, channel transfer, or channel state query.
+   NOP с LAST — запрос состояния (единственное исключение). */
 void run_instruction(size i)
 {
   size n, dst, src, last;
@@ -133,7 +166,20 @@ void run_instruction(size i)
   dst = processor[i][1];
   src = processor[i][2];
   if(n == 0)
+  {
+    last = (size)(space_nbits - 1);
+    if(src == last && dst != last && query_ok(dst))
+    {
+      space[dst / CHAR_BIT] = input_state();
+      return;
+    }
+    if(dst == last && src != last && query_ok(src))
+    {
+      space[src / CHAR_BIT] = output_state();
+      return;
+    }
     return;
+  }
   last = (size)(space_nbits - 1);
   if(src == last && dst == last)
     return;
@@ -154,8 +200,8 @@ void run_instruction(size i)
 
 /* one tick: first read all instructions, then execute all copies.
    возврат состояния такта: 1 если исполнен (есть не-NOP), иначе 0.
-   такт исполняется до конца и при halted; канальные обращения идут
-   в порядке инструкций, так как stdin/stdout последовательны */
+   канальные обращения идут в порядке инструкций,
+   так как stdin/stdout последовательны */
 int computation(void)
 {
   size i;
@@ -177,6 +223,9 @@ int computation(void)
 void init_space(void)
 {
   size boot_n, boot_last;
+#ifdef SIGPIPE
+  signal(SIGPIPE, SIG_IGN);
+#endif
   init_channels();
   space = malloc(space_nbits / CHAR_BIT);
   processor = malloc(proc_n * sizeof *processor);

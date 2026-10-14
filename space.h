@@ -38,7 +38,7 @@ enum {
    space_nbits % CHAR_BIT == 0 (массивы побайтовые, точные),
    space_nbits <= SPACE_BITS_MAX (позиции адресуются 16 битами),
    proc_n >= 1, space_nbits >= proc_n * INSTRUCTION_SIZE + 8
-   (образ процессора плюс байт состояния канала вне его).
+   (инструкции процессора плюс байт состояния канала вне их).
    Делением без переполнения: proc_n <= (space_nbits - 8) / INSTRUCTION_SIZE.
    Отсюда proc_n <= 1365 < 65535: индекса `size` достаточно везде. */
 
@@ -64,7 +64,6 @@ extern const size o[N_FIELDS];
 extern const size s[N_FIELDS];
 
 /* ENGINE */
-extern int halted;               /* 1 после конца ввода/ошибки: такт до конца, затем останов */
 extern FILE *channel_in;         /* поток ввода (по умолчанию stdin) */
 extern FILE *channel_out;        /* поток вывода (по умолчанию stdout) */
 void run_instruction(size i);    /* исполнить прочитанную i-ю инструкцию */

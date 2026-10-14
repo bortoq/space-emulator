@@ -14,6 +14,9 @@ echo "== загрузка и исполнение =="
 echo "== останов NOPами =="
 ./tests/stop.sh
 
+echo "== запросы состояния =="
+./tests/state.sh
+
 echo "== размеры и флаги =="
 ./tests/cfg.sh
 
