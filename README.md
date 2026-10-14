@@ -25,7 +25,7 @@ a phase does not change the result.
 The instruction format depends on the space size. Take
 `a = ceil(log2(space bits))`. Field `n` takes `a-1` bits. Fields `dst` and
 `src` take `a` bits each. One instruction takes `3a-1` bits. Bit `k` of a
-value sits at bit `k` of its field. With the default `-s 65520` one
+value sits at bit `k` of its field. With the default `-s 65520`, one
 instruction is `15+16+16 = 47` bits. NOP is an instruction with 0 in
 field `n`.
 
@@ -43,12 +43,12 @@ its instructions.
 The channel is the last position of the space, `LAST`. It carries input and
 output, and one tick may perform both.
 
-  `[n, dst, LAST]` — input: `n` bits from `stdin` to `[dst, dst+n)`
-  `[n, LAST, src]` — output: `n` bits from `[src, src+n)` to `stdout`
+- `[n, dst, LAST]` — input: `n` bits from `stdin` to `[dst, dst+n)`
+- `[n, LAST, src]` — output: `n` bits from `[src, src+n)` to `stdout`
 
 Channel copies are normal processor instructions. They run in order inside
 the tick. Stream bits go on from one access to the next. The first bit of a
-stream byte is its high bit. A short transfer takes the bits it got. The
+stream byte is its high bit. An incomplete transfer takes the bits it got. The
 next access takes the rest.
 
 A NOP with `LAST` (`n = 0`) is a state query: `[0, dst, LAST]` writes 8 bits
