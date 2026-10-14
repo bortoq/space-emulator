@@ -13,9 +13,11 @@ unsigned char space[SPACE_SIZE / CHAR_BIT];
 const size o[N_FIELDS] = {0, N_SIZE, N_SIZE + ADDRESS_SIZE};
 const size s[N_FIELDS] = {N_SIZE, ADDRESS_SIZE, ADDRESS_SIZE};
 
-/* core: канал ввода, канал вывода, загрузчик */
+/* core: ввод через LAST, вывод через LAST, загрузчик.
+   канальные буферы — вне образов инструкций [0, 3072)
+   и вне полуинтервалов загрузчика, иначе ввод портит образ */
 const size core[9] = {
-  0x0008, 0x0020, 0x0C00, /* channel in:  8 бит stdin -> space[0x0020] */
-  0x0008, 0x0C08, 0x0000, /* channel out: 8 бит space[0x0C08] -> stdout */
-  0x0BD0, 0x0BD0, 0x0C00, /* loader: 3024 бита 0x0C00 -> 0x0BD0 */
+  0x0008, 0x2000, LAST, /* in:  8 бит stdin -> [0x2000, 0x2008) */
+  0x0008, LAST, 0x2010, /* out: 8 бит [0x2010, 0x2018) -> stdout */
+  0x0BD0, 0x0BD0, 0x0C00, /* loader: 3024 бита [0x0C00, ...) -> [0x0BD0, ...) */
 };

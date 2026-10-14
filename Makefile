@@ -1,16 +1,17 @@
 CC      ?= gcc
 CFLAGS  ?= -std=c11 -Wall -Wextra -O2
 COMMON  = globals.c bitcopy.c
+ENGINE  = engine.c $(COMMON)
 
 all: space
 
-space: space.c $(COMMON) space.h
-	$(CC) $(CFLAGS) -o space space.c $(COMMON)
+space: space.c engine.c $(COMMON) space.h
+	$(CC) $(CFLAGS) -o space space.c engine.c $(COMMON)
 
 check: all
 	./tests/run_tests.sh
 
 clean:
-	rm -f space tests/test_bitcpy
+	rm -f space tests/test_bitcpy tests/test_channels
 
 .PHONY: all check clean
