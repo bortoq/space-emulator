@@ -34,7 +34,8 @@ enum {
 /* types */
 typedef uint16_t  size;           /* large enough for instruction argument */
 
-/* copy bits from one array to another (n, src, s, dst, d) */
+/* copy bits from one array to another (n, src, s, dst, d).
+   intervals [s, s + n) and [d, d + n) must not overlap */
 void bitcpy(size_t n, const void *src, size_t s, void *dst, size_t d);
 
 /* GLOBALS (определения — в globals.c) */
