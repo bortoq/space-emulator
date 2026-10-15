@@ -11,11 +11,12 @@
  *
  * Sizes come from flags (-s space bits, -p processor instructions).
  * Instruction field widths follow the space size: address bits =
- * ceil(log2 space bits), count field one bit less, instruction =
+ * ceil(log2(space bits + 1)), count field one bit less, instruction =
  * 2*address bits + count bits (computed in parse_config).
- * The single channel is the last position of the space. Channel access
- * transfers any number of bits at any bit position; stream bits
- * continue across accesses.
+ * The single channel, DATA, is the position just after the space
+ * (space_nbits). Channel access transfers any number of bits at any
+ * bit position; stream bits continue across accesses. A transfer
+ * carries its own status in the tail of its half-interval (see engine.c).
  */
 #ifndef SPACE_H_
 #define SPACE_H_
@@ -27,20 +28,18 @@
 #include <limits.h>
 
 /* types */
-typedef uint16_t  size;  /* large enough for a field value */
+typedef uint32_t  size;  /* large enough for a field value and a position */
 
 /* defaults and fixed constants (format widths follow the space size) */
 enum {
   SPACE_BITS_DFLT = 0xFFF0, /* -s default (bits) */
   PROC_N_DFLT = 64,         /* -p default (instructions) */
-  SPACE_BITS_MAX = 1 << (8 * (int)sizeof(size)), /* -s limit (addresses are fields) */
+  SPACE_BITS_MAX = 65536,   /* -s limit (the channel address needs a bits) */
   PROCESSOR_START = 0,      /* bit index of the first instruction */
   N_FIELDS = 3,             /* fields in an instruction: n, dst, src */
-  STATE_BITS = 8,           /* query: leading state bits, then the last
-                               transfer count in nfield_bits (low byte first) */
-  STATE_END = 0x01,         /* read side: end of input seen */
-  STATE_IN_FAIL = 0x02,     /* read side: input failure */
-  STATE_OUT_FAIL = 0x01,    /* write side: output failure */
+  ERR_BITS = 8,             /* status: 8-bit error number (errno) */
+  EOF_BITS = 1,             /* status: read end-of-input bit */
+  ERR_IO = 1,               /* error number when the stream has no errno */
   EXIT_USAGE = 2,           /* bad flags */
   EXIT_MEMORY = 1           /* allocation failure */
 };
@@ -48,14 +47,16 @@ enum {
 /* limits (checked at startup, derived in parse_config):
    8 <= space_nbits <= SPACE_BITS_MAX,
    proc_n >= 1,
-   proc_n * instruction_size <= space_nbits - (STATE_BITS + nfield_bits)
-   (processor plus the query record: state and count),
+   proc_n * instruction_size + (EOF_BITS + ERR_BITS + nfield_bits)
+     <= space_nbits
+   (processor plus the boot read status record),
    proc_n * instruction_size <= 2^nfield_bits - 1
    (the boot instruction count must fit the count field).
    Field widths follow the space size, so smaller spaces use narrower
-   fields: at -s 22 the format is 5+5+4 = 14 bits and the space holds
-   exactly 1 instruction. With default sizes the format is 16+15 = 47
-   bits and proc_n <= 697; a `size` index is enough everywhere. */
+   fields. With default sizes the format is 16+15 = 47 bits and
+   proc_n <= 697; a `size` index is enough everywhere. The smallest
+   space is -s 27 -p 1 (one 14-bit instruction plus the boot status
+   record). */
 
 /* configuration (-s, -p, -t; definitions in globals.c) */
 extern size_t space_nbits;        /* bits in the space */

@@ -40,13 +40,14 @@ static const char *flag_value(int *i, int argc, char **argv, const char *arg)
   return argv[*i];
 }
 
-/* field widths from the space size: address bits = ceil(log2 space bits),
+/* field widths from the space size: address bits a = ceil(log2 space bits + 1)
+   (positions 0..space_nbits, the last one is the DATA channel),
    count field one bit less, instruction = 2*address + count */
 static void compute_format(void)
 {
   size_t v;
   size a = 0;
-  for(v = space_nbits - 1; v; v >>= 1)
+  for(v = space_nbits; v; v >>= 1)
     ++a;
   address_bits = a;
   nfield_bits = (size)(a - 1);
@@ -63,6 +64,7 @@ static void compute_format(void)
 void parse_config(int argc, char **argv)
 {
   int i;
+  size_t record;
   for(i = 1; i < argc; ++i)
   {
     const char *arg = argv[i];
@@ -87,13 +89,14 @@ void parse_config(int argc, char **argv)
     usage();
   }
   compute_format();
-  if(space_nbits < (size_t)STATE_BITS + nfield_bits ||
-     proc_n > (space_nbits - (size_t)STATE_BITS - nfield_bits) / instruction_size)
+  record = (size_t)EOF_BITS + (size_t)ERR_BITS + (size_t)nfield_bits;
+  if(space_nbits <= record
+     || proc_n > (space_nbits - record) / (size_t)instruction_size)
   {
-    fprintf(stderr, "space: need processor instructions plus query record outside them (-s/-p)\n");
+    fprintf(stderr, "space: need processor instructions plus the boot status record (-s/-p)\n");
     usage();
   }
-  if(proc_n * (size_t)instruction_size > ((size_t)1 << nfield_bits) - 1)
+  if(proc_n > (((size_t)1 << nfield_bits) - 1) / (size_t)instruction_size)
   {
     fprintf(stderr, "space: boot count does not fit the n field (-s/-p)\n");
     usage();

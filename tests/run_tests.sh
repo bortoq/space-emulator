@@ -14,11 +14,14 @@ echo "== load and run =="
 echo "== NOP stop =="
 ./tests/stop.sh
 
-echo "== state queries =="
-./tests/state.sh
+echo "== transfer status =="
+./tests/status.sh
 
 echo "== channel bit transfers =="
 ./tests/channels.sh
+
+echo "== guard clauses =="
+./tests/guards.sh
 
 echo "== sizes and flags =="
 ./tests/cfg.sh

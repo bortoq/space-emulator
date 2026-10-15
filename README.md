@@ -23,16 +23,19 @@ the load included, takes effect from the next tick. The order inside
 a phase does not change the result.
 
 The instruction format depends on the space size. Take
-`a = ceil(log2(space bits))`. Field `n` takes `a-1` bits. Fields `dst` and
-`src` take `a` bits each. One instruction takes `3a-1` bits. Bit `k` of a
-value sits at bit `k` of its field. With the default `-s 65520`, one
+`a = ceil(log2(space bits + 1))`. Field `n` takes `a-1` bits. Fields `dst`
+and `src` take `a` bits each. One instruction takes `3a-1` bits. Bit `k`
+of a value sits at bit `k` of its field. With the default `-s 65520`, one
 instruction is `15+16+16 = 47` bits. NOP is an instruction with 0 in
 field `n`.
 
-The boot instruction is one load: `(N·instruction, 0, LAST)`. It reads
+The boot instruction is one load: `(N·instruction, 0, DATA)`. It reads
 all processor instructions from `stdin` to positions `[0, N·instruction)`.
-The stream has program bits first and data after them. Tick 1 reads and
-loads. The user program runs from tick 2.
+It then writes its read status record at
+`[N·instruction, N·instruction+a+8)`. The stream has program bits first
+and data after them. Tick 1 reads and loads. The user program runs from
+tick 2. If the stream has fewer program bits, the load leaves the
+processor full of NOPs and the space stops.
 
 The space stops when the processor holds only NOPs — all `n` are zero.
 The program can stop itself: it copies zeros into the `n` fields of
@@ -40,31 +43,37 @@ its instructions.
 
 ### Channels
 
-The channel is the last position of the space, `LAST`. It carries input and
-output, and one tick may perform both.
+The single channel is `DATA`, the position just after the space
+(`space_nbits`). It carries input and output, and one tick may perform
+both.
 
-- `[n, dst, LAST]` — input: `n` bits from `stdin` to `[dst, dst+n)`
-- `[n, LAST, src]` — output: `n` bits from `[src, src+n)` to `stdout`
+- `[n, dst, DATA]` — input: data and status from `stdin` to `[dst, dst+n)`
+- `[n, DATA, src]` — output: data and status from `[src, src+n)` to `stdout`
 
-Channel copies are normal processor instructions. They run in order inside
-the tick. Stream bits go on from one access to the next. The first bit of a
-stream byte is its high bit. An incomplete transfer takes the bits it got. The
-next access takes the rest. Bits stay in the emulator until a byte is full.
-At program end the last output byte is written with zero padding.
+A transfer carries its own status in the tail of its half-interval.
+The program reads the status right after the transfer.
 
-A NOP with `LAST` (`n = 0`) is a state query. It writes 8 bits of state.
-Then it writes the count of the last transfer. The count takes `a-1` bits
-in bytes after the state. The first count byte is the low byte of the count.
-`[0, dst, LAST]` writes the read state and the input count to
-`[dst, dst+8+(a-1))`. `[0, LAST, src]` writes the write state and the output
-count to `[src, src+8+(a-1))`. Read state: bit 0 — the input ended,
-bit 1 — the input failed. Write state: bit 0 — the output failed.
-The other state bits are zero. The count is the number of bits the last
-transfer moved. The query needs room for state and count outside the
-processor. The state shows the stream conditions at query time.
+- Input `[dst, dst+n)`: data in `[dst, dst+n-Sr)`. Status in
+  `[dst+n-Sr, dst+n)`: end bit (1), errno (8), size (`a-1`).
+- Output `[src, src+n)`: data in `[src, src+n-Sw)`. Status in
+  `[src+n-Sw, src+n)`: errno (8), size (`a-1`).
 
-One tick does at most one input and one output with `n` not zero.
-The program must keep to this rule.
+`Sr` is `1+8+(a-1)` and `Sw` is `8+(a-1)`. The size is the number of
+data bits the transfer moved. The end bit is one when the input has
+ended. errno is zero without a failure and the operation error number
+otherwise. The status number fields take their low bit first. An
+incomplete transfer fills the data bits it got and leaves the rest.
+The program keeps `n` above `Sr` for input and above `Sw` for output.
+A transfer below that is skipped.
+
+Channel copies are normal processor instructions. They run in order
+inside the tick. Stream bits go on from one access to the next. The
+first bit of a stream byte is its high bit. Bits stay in the emulator
+until a byte is full. At program end the last output byte is written
+with zero padding.
+
+One tick does at most one input and one output. The program must keep
+to this rule.
 
 ### The rest of the space
 
@@ -86,24 +95,24 @@ make check          # + tests (tests/run_tests.sh)
 
 # run: space [-s bits] [-p num] [-t ticks] < user_space > result.
 # defaults: 65520 bits, 64 instructions, no tick limit.
-# limits: with a = ceil(log2 -s):
-#   -p * (3a-1) <= -s - (8 + a - 1)  (processor plus query record)
-#   -p * (3a-1) <= 2^(a-1) - 1       (boot count fits field n)
+# limits: with a = ceil(log2 (space bits + 1)):
+#   -p * (3a-1) + (1 + 8 + a - 1) <= -s   (processor plus boot status record)
+#   -p * (3a-1) <= 2^(a-1) - 1            (boot count fits field n)
 # a wrong flag or limit gives exit code 2.
-# smallest space: -s 26 -p 1 (one 14-bit instruction plus the query record).
+# smallest space: -s 27 -p 1 (one 14-bit instruction plus the boot record).
 # with defaults: instruction 47 bits, -p up to 697.
 
 # smallest example: 14 zero program bits; load tick, NOP stop, silence:
-head -c 2 /dev/zero | ./space -s 26 -p 1 | xxd    # empty output
+head -c 2 /dev/zero | ./space -s 27 -p 1 | xxd    # empty output
 
 # example with defaults (stream bytes: first printf in tests/boot.sh):
-# program (8,0x2000,LAST), (8,0x2010,0x2000), (8,LAST,0x2010),
+# program (32,0x2000,DATA), (8,0x2100,0x2000), (31,DATA,0x2100),
 # 61 NOPs — 3008 bits = 376 bytes — then 'Z'.
 # tick 1: load; tick 2: input 'Z', copy, output 'Z';
 # tick 3: input ends (3-tick limit). Output: 5A 5A.
 
-# state queries (program in tests/state.sh), stream byte 'Q',
-# 4 tick limit. Output: 00 00 00, 00 01 00, 01 01 00.
+# transfer status (program in tests/status.sh), stream byte 'Q',
+# 2 tick limit. Output: 00 08 00 (end 0, errno 0, size 8).
 ```
 
 License: MIT.

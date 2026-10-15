@@ -4,22 +4,28 @@
  * Each tick has two phases: first read all
  * "copy n, dst, src" instructions from the processor positions,
  * then execute all copies over the bit space.
- * An instruction whose source half-interval starts at the last
- * position of the space is input (stdin -> space),
- * one whose destination half-interval starts there is
- * output (space -> stdout); the rest are
- * ordinary internal copies. Channel access transfers any number
- * of bits at any bit position; stream bits continue across
- * accesses (one stream byte holds 8 bits, first bit is the high
- * one). A short transfer places what is available and never stops.
- * A query writes the state and the count of the last transfer
- * of that direction.
- * Writes to processor positions (including the load) take effect
- * from the next tick; position order inside phases does not matter.
- * Half-interval non-overlap is never checked: the program
- * guarantees it, the emulator relies on it.
+ * The single channel DATA is the position just after the space
+ * (space_nbits). An instruction whose source field is DATA is input
+ * (stdin -> space), one whose destination field is DATA is output
+ * (space -> stdout); the rest are ordinary internal copies.
+ * A channel transfer carries its own status in the tail of its
+ * half-interval, so the program reads it right after the transfer:
+ *   input  [dst, dst+n): data in [dst, dst+n-Sr), status in
+ *     [dst+n-Sr, dst+n): end bit (1), errno (8), size (nfield_bits).
+ *   output [src, src+n): data in [src, src+n-Sw), status in
+ *     [src+n-Sw, src+n): errno (8), size (nfield_bits).
+ * Sr = EOF_BITS + ERR_BITS + nfield_bits, Sw = ERR_BITS + nfield_bits.
+ * The status numeric fields are low bit first (bit k at offset k);
+ * errno is 0 without failure. A short transfer fills the data bits it
+ * got and never stops. The untouched data bits keep their old value.
+ * Stream bits continue across accesses (one stream byte holds 8 bits,
+ * the first bit is the high one). Writes to processor positions
+ * (including the load) take effect from the next tick; position order
+ * inside phases does not matter. Half-interval non-overlap is never
+ * checked: the program guarantees it, the emulator relies on it.
  */
 #include "space.h"
+#include <errno.h>
 #ifdef SIGPIPE
 #include <signal.h>
 #endif
@@ -33,8 +39,16 @@ static unsigned char in_byte;
 static int in_left;
 static unsigned char out_byte;
 static int out_used;
-static size in_copied;   /* bits moved by the last input */
-static size out_copied;  /* bits moved by the last output */
+
+/* stream error numbers captured when the failing operation runs */
+static unsigned char in_error;
+static unsigned char out_error;
+
+/* data bits moved by the last input: the boot load uses it */
+static size last_input_bits;
+
+/* the boot load runs in the first tick; it adds the status record */
+static int boot_pending = 0;
 
 /* test one space bit (bit 0 of a byte is the high bit) */
 static inline int space_bit(size_t p)
@@ -59,7 +73,7 @@ static inline size get_argument(size src, size n)
   size v = 0;
   size k;
   if(n > sizeof v * CHAR_BIT)
-    n = sizeof v * CHAR_BIT;
+    n = (size)(sizeof v * CHAR_BIT);
   for(k = 0; k < n; ++k)
     if(space_bit(src + k))
       v = (size)(v | (size)1 << k);
@@ -72,22 +86,6 @@ static inline void store_argument(size n, size value, size at)
   size k;
   for(k = 0; k < n; ++k)
     space_set_bit(at + k, (value >> k) & 1);
-}
-
-/* write the transfer count as bytes after the state
-   (low byte of the value first, bit 0 of a byte is the high bit;
-   unused top bits of the last byte are zero) */
-static inline void store_count(size at, size value)
-{
-  size bytes_total = (size)(nfield_bits + CHAR_BIT - 1) / CHAR_BIT;
-  size bits_total = (size)(bytes_total * CHAR_BIT);
-  size k;
-  for(k = 0; k < bits_total; ++k)
-    space_set_bit((size_t)(at + k), 0);
-  for(k = 0; k < nfield_bits; ++k)
-    if((value >> k) & 1)
-      space_set_bit((size_t)(at + (k / CHAR_BIT) * CHAR_BIT
-        + (CHAR_BIT - 1 - k % CHAR_BIT)), 1);
 }
 
 /* read "i-th instruction" bit string from bit space to the processor mechanism */
@@ -122,6 +120,31 @@ static inline int instruction_ok(size n, size dst, size src)
   return 1;
 }
 
+/* bits in the status tail of an input (eof, errno, size) */
+static inline size read_status_bits(void)
+{
+  return (size)(EOF_BITS + ERR_BITS + nfield_bits);
+}
+
+/* bits in the status tail of an output (errno, size) */
+static inline size write_status_bits(void)
+{
+  return (size)(ERR_BITS + nfield_bits);
+}
+
+/* 8-bit error number of a stream: 0 when clean, else the code captured
+   at the failed operation (or ERR_IO when there is no code) */
+static unsigned char op_errno(FILE *f, unsigned char stored)
+{
+  if(f == NULL)
+    return (unsigned char)ERR_IO;
+  if(!ferror(f))
+    return 0;
+  if(stored)
+    return stored;
+  return (unsigned char)ERR_IO;
+}
+
 /* channel streams default to stdio (already assigned ones stay, for tests) */
 static inline void init_channels(void)
 {
@@ -133,70 +156,103 @@ static inline void init_channels(void)
   in_left = 0;
   out_byte = 0;
   out_used = 0;
-  in_copied = 0;
-  out_copied = 0;
 }
 
-/* copy n_bits from f to the half-interval [addr_bits, addr_bits + n_bits).
-   any n_bits and addr_bits; stream bits continue across accesses.
-   return 0 if full, -1 if skipped or short (end/failure seen via query) */
+/* input: half-interval [addr_bits, addr_bits + n_bits); data first,
+   then the status tail (eof, errno, size). return 0 on a channel
+   transfer, -1 when skipped (no stream, no room, no data field). */
 int space_input(size n_bits, size addr_bits, FILE *f)
 {
-  in_copied = 0;
+  size data, moved, base, take;
+  last_input_bits = 0;
   if(f == NULL)
     return -1;
-  if(n_bits == 0)
-    return 0;
   if((size_t)addr_bits + (size_t)n_bits > space_nbits)
     return -1;
-  while(n_bits)
+  if(n_bits < read_status_bits())
+    return -1;
+  data = (size)(n_bits - read_status_bits());
+  moved = 0;
+  while(moved < data)
   {
-    size take;
     if(in_left == 0)
     {
       if(fread(&in_byte, 1, 1, f) != 1)
-        return -1;
+      {
+        if(ferror(f) && in_error == 0)
+        {
+          if(errno)
+            in_error = (unsigned char)errno;
+          else
+            in_error = (unsigned char)ERR_IO;
+        }
+        break;
+      }
       in_left = CHAR_BIT;
     }
-    take = (size)in_left < n_bits ? (size)in_left : n_bits;
-    bitcpy(take, &in_byte, CHAR_BIT - in_left, space, addr_bits);
+    if((size)in_left < (size)(data - moved))
+      take = (size)in_left;
+    else
+      take = (size)(data - moved);
+    bitcpy(take, &in_byte, (size_t)(CHAR_BIT - in_left), space, (size_t)(addr_bits + moved));
     in_left -= (int)take;
-    n_bits -= take;
-    addr_bits = (size)(addr_bits + take);
-    in_copied = (size)(in_copied + take);
+    moved = (size)(moved + take);
   }
+  base = (size)(addr_bits + data);
+  if(feof(f))
+    space_set_bit((size_t)base, 1);
+  else
+    space_set_bit((size_t)base, 0);
+  store_argument(ERR_BITS, op_errno(f, in_error), (size)(base + EOF_BITS));
+  store_argument(nfield_bits, moved, (size)(base + EOF_BITS + ERR_BITS));
+  last_input_bits = moved;
   return 0;
 }
 
-/* copy n_bits from the half-interval [addr_bits, addr_bits + n_bits) to f.
-   any n_bits and addr_bits; bits stay collected until a byte is full.
-   return 0 if full, -1 if skipped or failed */
+/* output: half-interval [addr_bits, addr_bits + n_bits); data first,
+   then the status tail (errno, size). bits stay collected until a
+   byte is full. return 0 on a channel transfer, -1 when skipped. */
 int space_output(size n_bits, size addr_bits, FILE *f)
 {
-  out_copied = 0;
+  size data, moved, base, take;
   if(f == NULL)
     return -1;
-  if(n_bits == 0)
-    return 0;
   if((size_t)addr_bits + (size_t)n_bits > space_nbits)
     return -1;
-  while(n_bits)
+  if(n_bits < write_status_bits())
+    return -1;
+  data = (size)(n_bits - write_status_bits());
+  moved = 0;
+  while(moved < data)
   {
-    size take;
-    take = (size)(CHAR_BIT - out_used) < n_bits ? (size)(CHAR_BIT - out_used) : n_bits;
-    bitcpy(take, space, addr_bits, &out_byte, out_used);
+    if((size)(CHAR_BIT - out_used) < (size)(data - moved))
+      take = (size)(CHAR_BIT - out_used);
+    else
+      take = (size)(data - moved);
+    bitcpy(take, space, (size_t)(addr_bits + moved), &out_byte, (size_t)out_used);
     out_used += (int)take;
-    n_bits -= take;
-    addr_bits = (size)(addr_bits + take);
-    out_copied = (size)(out_copied + take);
+    moved = (size)(moved + take);
     if(out_used == CHAR_BIT)
     {
-      int ok = fwrite(&out_byte, 1, 1, f) == 1;
+      unsigned char b = out_byte;
       out_used = 0;
-      if(!ok)
-        return -1;
+      out_byte = 0;
+      if(fwrite(&b, 1, 1, f) != 1)
+      {
+        if(ferror(f) && out_error == 0)
+        {
+          if(errno)
+            out_error = (unsigned char)errno;
+          else
+            out_error = (unsigned char)ERR_IO;
+        }
+        break;
+      }
     }
   }
+  base = (size)(addr_bits + data);
+  store_argument(ERR_BITS, op_errno(f, out_error), base);
+  store_argument(nfield_bits, moved, (size)(base + ERR_BITS));
   return 0;
 }
 
@@ -210,80 +266,44 @@ void channel_flush(void)
   }
 }
 
-/* state byte of the read side: end of input seen, input failure
-   (sticky stdio flags, query never clears them) */
-static unsigned char input_state(void)
+/* zero the count field of every instruction: the processor holds only NOPs */
+static void stop_processor(void)
 {
-  unsigned char st = 0;
-  if(channel_in != NULL)
-  {
-    if(feof(channel_in))
-      st |= STATE_END;
-    if(ferror(channel_in))
-      st |= STATE_IN_FAIL;
-  }
-  return st;
-}
-
-/* state byte of the write side: output failure */
-static unsigned char output_state(void)
-{
-  unsigned char st = 0;
-  if(channel_out != NULL && ferror(channel_out))
-    st |= STATE_OUT_FAIL;
-  return st;
-}
-
-/* query target (STATE_BITS) must fit and lie outside the processor.
-   alignment is not required: bitcpy writes it */
-static inline int query_ok(size addr_bits)
-{
-  if((size_t)addr_bits + STATE_BITS + nfield_bits > space_nbits)
-    return 0;
-  if((size_t)addr_bits < proc_n * instruction_size)
-    return 0;
-  return 1;
+  size i;
+  for(i = 0; (size_t)i < proc_n; ++i)
+    store_argument(nfield_bits, 0, i * instruction_size + o[0]);
 }
 
 /* execute the already fetched i-th instruction:
-   ordinary copy, channel transfer, or channel state query.
-   NOP with LAST is a state query (the single exception). */
+   ordinary copy, input, or output. NOP (n = 0) does nothing.
+   The boot load is the first instruction of the first tick:
+   it reads N*instruction bits and adds the status record. */
 void run_instruction(size i)
 {
-  size n, dst, src, last;
+  size n, dst, src;
   if((size_t)i >= proc_n)
     return;
   n = processor[i][0];
   dst = processor[i][1];
   src = processor[i][2];
-  if(n == 0)
+  if(boot_pending && i == 0)
   {
-    last = (size)(space_nbits - 1);
-    if(src == last && dst != last && query_ok(dst))
-    {
-      unsigned char st = input_state();
-      bitcpy(STATE_BITS, &st, 0, space, dst);
-      store_count((size)(dst + STATE_BITS), in_copied);
-      return;
-    }
-    if(dst == last && src != last && query_ok(src))
-    {
-      unsigned char st = output_state();
-      bitcpy(STATE_BITS, &st, 0, space, src);
-      store_count((size)(src + STATE_BITS), out_copied);
-      return;
-    }
+    boot_pending = 0;
+    space_input((size)(n + read_status_bits()), dst, channel_in);
+    if(last_input_bits < n)
+      stop_processor();
     return;
   }
-  last = (size)(space_nbits - 1);
-  if(src == last && dst == last)
+  if(n == 0)
     return;
-  if(src == last)
+  if((size_t)src == space_nbits && (size_t)dst == space_nbits)
+    return;
+  if((size_t)src == space_nbits)
   {
     space_input(n, dst, channel_in);
     return;
   }
-  if(dst == last)
+  if((size_t)dst == space_nbits)
   {
     space_output(n, src, channel_out);
     return;
@@ -294,9 +314,7 @@ void run_instruction(size i)
 }
 
 /* one tick: first read all instructions, then execute all copies.
-   return tick state: 1 if executed (a non-NOP was present), else 0.
-   channel accesses follow instruction order,
-   because stdin/stdout are sequential */
+   return tick state: 1 if executed (a non-NOP was present), else 0. */
 int computation(void)
 {
   size i;
@@ -317,7 +335,7 @@ int computation(void)
 /* allocate space, write the single boot instruction bit string */
 void init_space(void)
 {
-  size boot_n, boot_last;
+  size boot_n;
 #ifdef SIGPIPE
   signal(SIGPIPE, SIG_IGN);
 #endif
@@ -332,9 +350,9 @@ void init_space(void)
   memset(space, 0, (space_nbits + CHAR_BIT - 1) / CHAR_BIT);
   memset(processor, 0, proc_n * sizeof *processor);
   boot_n = (size)(proc_n * instruction_size);
-  boot_last = (size)(space_nbits - 1);
   processor[0][0] = boot_n;
   processor[0][1] = PROCESSOR_START;
-  processor[0][2] = boot_last;
-  store_instruction(0, boot_n, PROCESSOR_START, boot_last);
+  processor[0][2] = (size)space_nbits;
+  store_instruction(0, boot_n, PROCESSOR_START, (size)space_nbits);
+  boot_pending = 1;
 }
