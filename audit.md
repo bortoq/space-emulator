@@ -1,67 +1,109 @@
-# Аудит эмулятора позиционного адресного пространства
+# Audit of the positional address space emulator
 
-Дата: 2026-10-15. Проверяемая ревизия: рабочее дерево поверх `6258659`
-(редизайн каналов + исправления предыдущего аудита, не закоммичено).
-Роль: Auditor. Метод: чтение исходников, статический разбор, сквозные
-тесты (`make check`), ASan+UBSan (`detect_leaks=1`), дифференциальный
-фаззинг против независимой эталонной модели, брутфорс границ конфигурации,
-воспроизведение находок прошлого аудита.
+Date: 2026-10-15. Revision under test: working tree on top of `6258659`
+(channel redesign + previous audit fixes, not committed).
+Role: Auditor. Method: reading the sources, static review, end-to-end
+tests (`make check`), ASan+UBSan (`detect_leaks=1`), differential fuzzing
+against an independent reference model, brute force over configuration
+bounds, reproduction of the previous audit findings.
 
-## 1. Итог
+## 1. Result
 
-Вердикт: **[APPROVED]** (критических и блокирующих замечаний нет).
+Verdict: **[APPROVED]** (no critical or blocking issues).
 
-Все 5 находок предыдущего аудита закрыты и проверены. Обнаружены два
-неблокирующих замечания (одно — вне контракта, одно — оптимизация) и один
-пробел в покрытии.
+All 5 findings of the previous audit are closed and verified. Two
+non-blocking notes were found (one outside the contract, one optimization)
+and one coverage gap.
 
-## 2. Проверка находок предыдущего аудита
+## 2. Verification of the previous audit findings
 
-| № | Находка | Статус | Доказательство |
-|---|---------|--------|----------------|
-| §1 | Крит: переполнение `proc_n * instruction_size` в `parse_config` | Исправлено | Проверки делением. `./space -p 5887258746928580303 -s 65520` → exit 2. Брутфорс 566 границ (S=27..65536): все совпали. |
-| §2 | Warning: незавершаемость на неполном boot-потоке | Исправлено | `stop_processor()` + `last_input_bits`. Пустой поток и 1 байт при `-s 27 -p 1` → exit 0 без `-t` (было 124). |
-| §3 | Warning: нет тестов на guard-ветви | Исправлено | `tests/guards.sh` (skip `13`, skip `80`), регрессии в `cfg.sh`/`boot.sh`. Ранее проверялось только вспомогательным скриптом. |
-| §4 | Opt: устаревший `errno` | Исправлено | Код фиксируется в момент сбоя (`in_error`/`out_error`), `op_errno()` отдаёт его. |
-| §5 | Opt: молчаливый пропуск `n < status` | Исправлено | README: «A transfer below that is skipped.» + описание неполной загрузки. |
+| # | Finding | Status | Evidence |
+|---|---------|--------|----------|
+| §1 | Critical: overflow of `proc_n * instruction_size` in `parse_config` | Fixed | Division checks. `./space -p 5887258746928580303 -s 65520` → exit 2. Brute force over 566 bounds (S=27..65536): all matched. |
+| §2 | Warning: no termination on an incomplete boot stream | Fixed | `stop_processor()` + `last_input_bits`. Empty stream and 1 byte at `-s 27 -p 1` → exit 0 without `-t` (was 124). |
+| §3 | Warning: no tests for the guard branches | Fixed | `tests/guards.sh` (skip `13`, skip `80`), regressions in `cfg.sh`/`boot.sh`. Before, only a helper script checked them. |
+| §4 | Opt: stale `errno` | Fixed | The code is captured when the failure happens (`in_error`/`out_error`); `op_errno()` returns it. |
+| §5 | Opt: silent skip of `n < status` | Fixed | README: "A transfer below that is skipped." plus a description of the incomplete load. |
 
-## 3. Новые замечания
+## 3. New notes
 
-| Блок кода | Тип | Описание | Как исправить |
-|-----------|-----|----------|---------------|
-| `bitcopy.c:80` (`memcpy`) через `engine.c:313` | Warning (вне контракта) | Копия с перекрывающимися half-intervals внутри одного вызова даёт `memcpy` с перекрытием — UB; под ASan падает (`memcpy-param-overlap`). README (§«Space device») и `space.h` явно перекладывают неперекрытие на программу, но вредоносная/ошибочная программа вызывает UB в эмуляторе. Достижимо и самомодификацией (запись в позиции процессора разрешена). | По решению: оставить как доверенную границу (документировано) либо добавить дешёвую проверку пересечения `[src,src+n)`/`[dst,dst+n)` перед `memcpy` (fallback на поэлементный проход). Не блокер. |
-| `engine.c:180-188, 242-248` | Opt | `errno` читается без предварительного `errno = 0;`. Если `fread`/`fwrite` вернулись коротко с выставленным `ferror`, но без свежего `errno`, в статус может попасть устаревшее значение. | Перед операцией ввода-вывода ставить `errno = 0;`. |
-| `space.h:37` | Opt (док) | Комментарий к `SPACE_BITS_MAX` («the channel address needs a bits») неточен: 17 бит адреса покрывают позицию 65536; ограничение задано искусственно (верхняя граница памяти/формата). | Уточнить формулировку: верхняя граница выбранного диапазона. |
+| Code block | Type | Description | How to fix |
+|------------|------|-------------|------------|
+| `bitcopy.c:80` (`memcpy`) via `engine.c:313` | Warning (outside the contract) | A copy with overlapping half-intervals inside one call makes an overlapping `memcpy` — UB; ASan reports it (`memcpy-param-overlap`). README (§"Space device") and `space.h` explicitly leave non-overlap to the program, but a malicious or buggy program causes UB in the emulator. It is also reachable by self-modification (writes to processor positions are allowed). | By decision: keep it as a trusted boundary (documented), or add a cheap overlap check for `[src,src+n)`/`[dst,dst+n)` before `memcpy` (fall back to a per-element loop). Not a blocker. |
+| `engine.c:180-188, 242-248` | Opt | `errno` is read without a preceding `errno = 0;`. If `fread`/`fwrite` return short with `ferror` set but without a fresh `errno`, a stale value can end up in the status. | Set `errno = 0;` before the I/O operation. |
+| `space.h:37` | Opt (doc) | The comment on `SPACE_BITS_MAX` ("the channel address needs a bits") is wrong: 17 address bits cover position 65536; the limit is set by hand (an upper bound of memory/format). | Reword: an upper bound of the chosen range. |
 
-## 4. Верификация
+## 4. Verification
 
-- **Сборка:** `-std=c11 -Wall -Wextra` — без предупреждений.
-- **`make check`:** все проверки зелёные (boot/stop/status/channels/guards/cfg).
-- **ASan+UBSan** (`detect_leaks=1`) на всём наборе — без ошибок.
-- **Дифференциальный фаззинг** C против эталонной модели: 2500 корректных
-  программ (случайные `-s` 80..500, `-p`, до 7 тактов, случайные потоки,
-  каналы/копии/guard-ветви) — 0 расхождений. Первые два расхождения были
-  артефактами харнесса (выравнивающие биты последнего байта; отсутствие
-  граничной проверки в модели), после их устранения эмулятор совпал с моделью.
-- **Брутфорс границ** конфигурации: 566 проверок (`-p` max валиден, `-p` max+1
-  → exit 2; `-s` 8/9/26/65537/100000 → exit 2; `27..65536` → exit 0) — 0 ошибок.
-- **Латентный дефект** `out_byte` (хвостовые биты после сброса полного байта)
-  подтверждён исправленным: регрессия «size above 255 (00 1A 40)» проходит.
+- **Build:** `-std=c11 -Wall -Wextra` — no warnings.
+- **`make check`:** all checks green (boot/stop/status/channels/guards/cfg).
+- **ASan+UBSan** (`detect_leaks=1`) on the whole set — no errors.
+- **Differential fuzzing** of C against the reference model: 2500 valid
+  programs (random `-s` 80..500, `-p`, up to 7 ticks, random streams,
+  channels/copies/guard branches) — 0 mismatches. The first two mismatches
+  were harness artifacts (padding bits of the last byte; a missing bound
+  check in the model). After fixing them the emulator matched the model.
+- **Brute force over configuration bounds:** 566 checks (`-p` max valid,
+  `-p` max+1 → exit 2; `-s` 8/9/26/65537/100000 → exit 2; `27..65536` →
+  exit 0) — 0 errors.
+- The latent `out_byte` defect (tail bits after resetting a full byte) is
+  confirmed fixed: the regression "size above 255 (00 1A 40)" passes.
 
-## 5. Остаточный риск и пробелы
+## 5. Remaining risk and gaps
 
-- Значение `errno` в статусе не проверяется сквозным тестом: boot первым
-  читает stdin, канал вывода один (`stdout`), поэтому код ошибки нельзя
-  вывести наружу. Путь сбоя записи покрыт `/dev/full` только на отсутствие
-  падения/зависания. Считаю допустимым при текущем контракте.
-- «Одна передача ввода и одна вывода на такт» и неперекрытие half-intervals —
-  обязанности программы; эмулятор их не проверяет (осознанно).
-- `doc/roadmap.md` отсутствует. Сверка велась с README как спецификацией;
-  функциональных отклонений не найдено.
+- The `errno` value in the status is not checked by an end-to-end test:
+  boot reads stdin first and there is one output channel (`stdout`), so the
+  error code cannot be observed outside. The write-failure path is covered
+  with `/dev/full` only for absence of a crash/hang. I consider this
+  acceptable under the current contract.
+- "One input transfer and one output transfer per tick" and non-overlap of
+  half-intervals are the program's duties; the emulator does not check them
+  (by design).
+- `doc/roadmap.md` is missing. The comparison used README as the spec; no
+  functional deviations were found.
 
-## 6. Заключение
+## 6. Conclusion
 
-Реализация соответствует README. Исправления предыдущего аудита
-корректны и подтверждены. Открытых критических дефектов нет.
+The implementation matches README. The fixes from the previous audit are
+correct and confirmed. There are no open critical defects.
 
-**Вердикт: [APPROVED].**
+**Verdict: [APPROVED].**
+
+## 7. Appendix (Coder): attempt to replace `bitcopy.c` with an external library
+
+Date: 2026-10-15. Author: Coder. Sections §1–§6 and the Auditor's verdict
+were not changed.
+
+Goal: replace the hand-written `bitcopy.c` with maintained external C code
+(the task "find quality maintained bitcopy code in C to replace ours").
+
+Candidates considered: `openxc/bitfield-c` (`copy_bits`, BSD-3, MSB),
+`hujiyo/bitcpy` (MIT, LSB), `noporpoise/BitArray` (CC0, LSB),
+`textbrowser/bitcopy` (no license), GDB `copy_bitwise` (GPLv3+),
+FFmpeg `ff_copy_bits` (LGPL). Only `openxc/bitfield-c` is compatible in
+both license (MIT) and bit order (MSB); GPL/LGPL are incompatible with MIT,
+the rest use LSB or have no license.
+
+`openxc/bitfield-c` (rev `e5692e7f`, BSD-3) was integrated behind an
+adapter over `bitcpy`. The upstream reads one byte past the source
+(`bitarray.c:73`, reproduced under ASan as a heap-buffer-overflow), so a
+guard byte was added for `space` and `in_byte`. `make check` and
+ASan+UBSan passed.
+
+A direct comparison with the previous implementation showed that ours is
+better:
+
+- **Speed** (gcc -O2, ns/call; ratio new/old): aligned n=65528 — 1.05x;
+  aligned n=65000 — 1.03x; shifted n=65000 — 1.22–1.26x; small n=8 —
+  1.37–2.09x; medium n=32..64 — 1.13–1.52x. The new one is slower on every
+  workload, worst on small copies (the I/O hot path).
+- **Memory:** `.text` of `space` is 8266 B (ours) against 8730 B (new),
+  plus the guard byte; 202 source lines against 230 (adapter + vendor).
+- **Other:** the upstream is frozen at 2021-07; our implementation needs no
+  guard byte and has no OOB read.
+
+Conclusion: the replacement attempt failed — the hand-written `bitcopy.c`
+is faster, smaller, and safer. The replacement was rolled back and the tree
+is back at `5771925`. Note on §3: the overlap/`memcpy` note still applies to
+both implementations (both call `memcpy` in the aligned middle); the
+replacement neither removed nor worsened it.
