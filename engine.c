@@ -10,10 +10,10 @@
  * (space -> stdout); the rest are ordinary internal copies.
  * A channel transfer carries its own status in the tail of its
  * half-interval, so the program reads it right after the transfer:
- *   input  [dst, dst+n): data in [dst, dst+n-Sr), status in
- *     [dst+n-Sr, dst+n): end bit (1), errno (8), size (nfield_bits).
- *   output [src, src+n): data in [src, src+n-Sw), status in
- *     [src+n-Sw, src+n): errno (8), size (nfield_bits).
+ * input  [dst, dst+n): data in [dst, dst+n-Sr), status in
+ * [dst+n-Sr, dst+n): end bit (1), errno (8), size (nfield_bits).
+ * output [src, src+n): data in [src, src+n-Sw), status in
+ * [src+n-Sw, src+n): errno (8), size (nfield_bits).
  * Sr = EOF_BITS + ERR_BITS + nfield_bits, Sw = ERR_BITS + nfield_bits.
  * The status numeric fields are low bit first (bit k at offset k);
  * errno is 0 without failure. A short transfer fills the data bits it
@@ -21,8 +21,9 @@
  * Stream bits continue across accesses (one stream byte holds 8 bits,
  * the first bit is the high one). Writes to processor positions
  * (including the load) take effect from the next tick; position order
- * inside phases does not matter. Half-interval non-overlap is never
- * checked: the program guarantees it, the emulator relies on it.
+ * inside phases does not matter. Half-interval non-overlap and in-space
+ * bounds are never checked: the program guarantees them, the emulator
+ * relies on it.
  */
 #include "space.h"
 #include <errno.h>
@@ -33,8 +34,10 @@
 FILE *channel_in = NULL;
 FILE *channel_out = NULL;
 
-/* stream bit cursors: unread bits of the current input byte and
-   bits already collected into the current output byte */
+/*
+ * stream bit cursors: unread bits of the current input byte and
+ * bits already collected into the current output byte
+ */
 static unsigned char in_byte;
 static int in_left;
 static unsigned char out_byte;
@@ -108,18 +111,6 @@ static inline void store_instruction(size i, size n, size dst, size src)
   store_argument(s[2], src, instruction_size * i + o[2]);
 }
 
-/* check instruction half-intervals before copy */
-static inline int instruction_ok(size n, size dst, size src)
-{
-  if((size_t)n > space_nbits)
-    return 0;
-  if((size_t)dst + (size_t)n > space_nbits)
-    return 0;
-  if((size_t)src + (size_t)n > space_nbits)
-    return 0;
-  return 1;
-}
-
 /* bits in the status tail of an input (eof, errno, size) */
 static inline size read_status_bits(void)
 {
@@ -132,8 +123,10 @@ static inline size write_status_bits(void)
   return (size)(ERR_BITS + nfield_bits);
 }
 
-/* 8-bit error number of a stream: 0 when clean, else the code captured
-   at the failed operation (or ERR_IO when there is no code) */
+/*
+ * 8-bit error number of a stream: 0 when clean, else the code captured
+ * at the failed operation (or ERR_IO when there is no code)
+ */
 static unsigned char op_errno(FILE *f, unsigned char stored)
 {
   if(f == NULL)
@@ -158,19 +151,23 @@ static inline void init_channels(void)
   out_used = 0;
 }
 
-/* input: half-interval [addr_bits, addr_bits + n_bits); data first,
-   then the status tail (eof, errno, size). return 0 on a channel
-   transfer, -1 when skipped (no stream, no room, no data field). */
+/*
+ * input: half-interval [addr_bits, addr_bits + n_bits); data first,
+ * then the status tail (eof, errno, size). return 0 on a channel
+ * transfer, -1 when there is no stream.
+ */
 int space_input(size n_bits, size addr_bits, FILE *f)
 {
   size data, moved, base, take;
   last_input_bits = 0;
   if(f == NULL)
     return -1;
-  if((size_t)addr_bits + (size_t)n_bits > space_nbits)
-    return -1;
-  if(n_bits < read_status_bits())
-    return -1;
+  /*
+   * No in-space bounds check and no check that n_bits holds the status
+   * tail: part of the space mechanism lives in the space itself, so the
+   * program guarantees both and the emulator trusts the program. A too
+   * small n_bits is a program error, not an emulator case.
+   */
   data = (size)(n_bits - read_status_bits());
   moved = 0;
   while(moved < data)
@@ -209,18 +206,23 @@ int space_input(size n_bits, size addr_bits, FILE *f)
   return 0;
 }
 
-/* output: half-interval [addr_bits, addr_bits + n_bits); data first,
-   then the status tail (errno, size). bits stay collected until a
-   byte is full. return 0 on a channel transfer, -1 when skipped. */
+/*
+ * output: half-interval [addr_bits, addr_bits + n_bits); data first,
+ * then the status tail (errno, size). bits stay collected until a
+ * byte is full. return 0 on a channel transfer, -1 when there is no
+ * stream.
+ */
 int space_output(size n_bits, size addr_bits, FILE *f)
 {
   size data, moved, base, take;
   if(f == NULL)
     return -1;
-  if((size_t)addr_bits + (size_t)n_bits > space_nbits)
-    return -1;
-  if(n_bits < write_status_bits())
-    return -1;
+  /*
+   * No in-space bounds check and no check that n_bits holds the status
+   * tail: part of the space mechanism lives in the space itself, so the
+   * program guarantees both and the emulator trusts the program. A too
+   * small n_bits is a program error, not an emulator case.
+   */
   data = (size)(n_bits - write_status_bits());
   moved = 0;
   while(moved < data)
@@ -274,10 +276,12 @@ static void stop_processor(void)
     store_argument(nfield_bits, 0, i * instruction_size + o[0]);
 }
 
-/* execute the already fetched i-th instruction:
-   ordinary copy, input, or output. NOP (n = 0) does nothing.
-   The boot load is the first instruction of the first tick:
-   it reads N*instruction bits and adds the status record. */
+/*
+ * execute the already fetched i-th instruction:
+ * ordinary copy, input, or output. NOP (n = 0) does nothing.
+ * The boot load is the first instruction of the first tick:
+ * it reads N*instruction bits and adds the status record.
+ */
 void run_instruction(size i)
 {
   size n, dst, src;
@@ -308,13 +312,18 @@ void run_instruction(size i)
     space_output(n, src, channel_out);
     return;
   }
-  if(!instruction_ok(n, dst, src))
-    return;
+  /*
+   * No in-space bounds check: part of the space mechanism lives in the
+   * space itself, so the program guarantees both half-intervals lie
+   * inside the space. The emulator trusts the program.
+   */
   bitcpy(n, space, src, space, dst);
 }
 
-/* one tick: first read all instructions, then execute all copies.
-   return tick state: 1 if executed (a non-NOP was present), else 0. */
+/*
+ * one tick: first read all instructions, then execute all copies.
+ * return tick state: 1 if executed (a non-NOP was present), else 0.
+ */
 int computation(void)
 {
   size i;

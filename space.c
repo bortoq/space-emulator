@@ -20,8 +20,10 @@ int main(int argc, char **argv)
 
   init_space();
 
-  /* emulate computation (tick runs to end even with no live instructions;
-     stop: all NOP or tick limit) */
+  /*
+   * emulate computation (tick runs to end even with no live instructions;
+   * stop: all NOP or tick limit)
+   */
   while((tick_limit == 0 || time--))
     if(!computation())
       break;

@@ -5,7 +5,7 @@
  *
  * Address space of positions: simultaneously available bit positions.
  * The single action: copying bit half-intervals
- *   copy n, dst, src  (n bits from [src, src+n) to [dst, dst+n)).
+ * copy n, dst, src  (n bits from [src, src+n) to [dst, dst+n)).
  * The emulator does not check half-interval non-overlap, it relies on it;
  * the program running in the space guarantees it.
  *
@@ -44,19 +44,21 @@ enum {
   EXIT_MEMORY = 1           /* allocation failure */
 };
 
-/* limits (checked at startup, derived in parse_config):
-   8 <= space_nbits <= SPACE_BITS_MAX,
-   proc_n >= 1,
-   proc_n * instruction_size + (EOF_BITS + ERR_BITS + nfield_bits)
-     <= space_nbits
-   (processor plus the boot read status record),
-   proc_n * instruction_size <= 2^nfield_bits - 1
-   (the boot instruction count must fit the count field).
-   Field widths follow the space size, so smaller spaces use narrower
-   fields. With default sizes the format is 16+15 = 47 bits and
-   proc_n <= 697; a `size` index is enough everywhere. The smallest
-   space is -s 27 -p 1 (one 14-bit instruction plus the boot status
-   record). */
+/*
+ * limits (checked at startup, derived in parse_config):
+ * 8 <= space_nbits <= SPACE_BITS_MAX,
+ * proc_n >= 1,
+ * proc_n * instruction_size + (EOF_BITS + ERR_BITS + nfield_bits)
+ * <= space_nbits
+ * (processor plus the boot read status record),
+ * proc_n * instruction_size <= 2^nfield_bits - 1
+ * (the boot instruction count must fit the count field).
+ * Field widths follow the space size, so smaller spaces use narrower
+ * fields. With default sizes the format is 16+15 = 47 bits and
+ * proc_n <= 697; a `size` index is enough everywhere. The smallest
+ * space is -s 27 -p 1 (one 14-bit instruction plus the boot status
+ * record).
+ */
 
 /* configuration (-s, -p, -t; definitions in globals.c) */
 extern size_t space_nbits;        /* bits in the space */
@@ -68,9 +70,11 @@ extern size address_bits;         /* bits in "dst"/"src" */
 extern size nfield_bits;          /* bits in "n" */
 extern size instruction_size;     /* bits in "copy n, dst, src" */
 
-/* copy bits from one array to another (n, src, s, dst, d).
-   Half-intervals [s, s + n) and [d, d + n) do not overlap
-   (caller guarantee). */
+/*
+ * copy bits from one array to another (n, src, s, dst, d).
+ * Half-intervals [s, s + n) and [d, d + n) do not overlap
+ * (caller guarantee).
+ */
 void bitcpy(size_t n, const void *src, size_t s, void *dst, size_t d);
 
 /* GLOBALS (definitions in globals.c, engine in engine.c) */

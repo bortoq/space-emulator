@@ -20,9 +20,6 @@ echo "== transfer status =="
 echo "== channel bit transfers =="
 ./tests/channels.sh
 
-echo "== guard clauses =="
-./tests/guards.sh
-
 echo "== sizes and flags =="
 ./tests/cfg.sh
 

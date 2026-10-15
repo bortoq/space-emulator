@@ -14,6 +14,13 @@ copy n, dst, src   — copy n bits from src to dst
 One copy uses two half-intervals, source and destination. A program is a
 sequence of ticks. The space executes one run of instructions in each tick.
 
+### Trust
+
+The emulator trusts the program in every case, even against common
+practice. The program guarantees that each copy stays inside the space
+and that its two half-intervals do not overlap. Part of the machine
+mechanism can live in the space itself.
+
 ### Processor and instructions
 
 The processor holds `proc_n` instructions at positions
@@ -64,7 +71,6 @@ ended. errno is zero without a failure and the operation error number
 otherwise. The status number fields take their low bit first. An
 incomplete transfer fills the data bits it got and leaves the rest.
 The program keeps `n` above `Sr` for input and above `Sw` for output.
-A transfer below that is skipped.
 
 Channel copies are normal processor instructions. They run in order
 inside the tick. Stream bits go on from one access to the next. The

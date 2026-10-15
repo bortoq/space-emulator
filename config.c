@@ -40,9 +40,11 @@ static const char *flag_value(int *i, int argc, char **argv, const char *arg)
   return argv[*i];
 }
 
-/* field widths from the space size: address bits a = ceil(log2 space bits + 1)
-   (positions 0..space_nbits, the last one is the DATA channel),
-   count field one bit less, instruction = 2*address + count */
+/*
+ * field widths from the space size: address bits a = ceil(log2 space bits + 1)
+ * (positions 0..space_nbits, the last one is the DATA channel),
+ * count field one bit less, instruction = 2*address + count
+ */
 static void compute_format(void)
 {
   size_t v;
