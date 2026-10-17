@@ -1,0 +1,45 @@
+/*
+ * CHANNEL PROTOCOL -- single source of truth (X-macro).
+ *
+ * Consumed at build time by tools/proto_gen.py; never included in C.
+ * By this file both the emulator side (encode/decode/tables) and the
+ * in-space driver (request/answer copycode) are generated, so they
+ * cannot drift apart.
+ *
+ * Field widths: a decimal number is a literal bit count; ADDR and NF are
+ * symbolic and resolved from the space size at run time
+ * (ADDR = address bits, NF = count-field bits; see config.c).
+ *
+ * Order matters: fields are laid out low bit first in the listed order.
+ * XOP(name, value)         operation codes (0 = NONE/empty)
+ * XFIELD(req|rsp, name, w) request/response record field
+ * XDEV(id, name, mode)     device pre-bound at startup (channel position
+ *                          space_nbits+1+id)
+ *
+ * The records are the SYS protocol only. A data channel carries data:
+ * a copy to it writes data out, a copy from it reads data in. Data never
+ * carries a record; state is read through SYS.
+ */
+
+XOP(NONE,  0)
+XOP(CLOSE, 1)
+XOP(SEEK,  2)
+XOP(FSTAT, 3)
+XOP(IOCTL, 4)
+/* reserve: SPAWN, POLL, MMAP, ... */
+
+XFIELD(req, op,    8)
+XFIELD(req, chan,  ADDR)
+XFIELD(req, flags, 16)
+XFIELD(req, arg,   32)
+XFIELD(req, off,   64)
+
+XFIELD(rsp, op,     8)
+XFIELD(rsp, status, 8)
+XFIELD(rsp, flags,  16)
+XFIELD(rsp, size,   64)
+XFIELD(rsp, moved,  NF)
+XFIELD(rsp, eof,    1)
+
+XDEV(0, stdin,  "r")
+XDEV(1, stdout, "w")

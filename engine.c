@@ -1,31 +1,20 @@
 /*
- * ADDRESS SPACE ENGINE (single channel version)
+ * ADDRESS SPACE ENGINE
  *
  * Each tick has two phases: first read all
  * "copy n, dst, src" instructions from the processor positions,
- * then execute all copies over the bit space.
- * The single channel DATA is the position just after the space
- * (space_nbits). An instruction whose source field is DATA is input
- * (stdin -> space), one whose destination field is DATA is output
- * (space -> stdout); the rest are ordinary internal copies.
- * A channel transfer carries its own status in the tail of its
- * half-interval, so the program reads it right after the transfer:
- * input  [dst, dst+n): data in [dst, dst+n-Sr), status in
- * [dst+n-Sr, dst+n): end bit (1), errno (8), size (nfield_bits).
- * output [src, src+n): data in [src, src+n-Sw), status in
- * [src+n-Sw, src+n): errno (8), size (nfield_bits).
- * Sr = EOF_BITS + ERR_BITS + nfield_bits, Sw = ERR_BITS + nfield_bits.
- * The status numeric fields are low bit first (bit k at offset k);
- * errno is 0 without failure. A short transfer fills the data bits it
- * got and never stops. The untouched data bits keep their old value.
- * Stream bits continue across accesses (one stream byte holds 8 bits,
- * the first bit is the high one). Writes to processor positions
- * (including the load) take effect from the next tick; position order
+ * then execute all copies over the bit space. A copy that touches a
+ * channel position (>= space_nbits) is served by sys_tick, not by the
+ * space buffer (see sys_ctrl.h). The seed (loading) is an ordinary copy
+ * seeded into processor slot 0 by the host: it reads the image from the
+ * stdin channel into the processor. Writes to processor positions
+ * (including the seed) take effect from the next tick; position order
  * inside phases does not matter. Half-interval non-overlap and in-space
  * bounds are never checked: the program guarantees them, the emulator
  * relies on it.
  */
 #include "space.h"
+#include "sys_ctrl.h"
 #include <errno.h>
 #include <string.h>
 #ifdef SIGPIPE
@@ -34,25 +23,6 @@
 
 FILE *channel_in = NULL;
 FILE *channel_out = NULL;
-
-/*
- * stream bit cursors: unread bits of the current input byte and
- * bits already collected into the current output byte
- */
-static unsigned char in_byte;
-static int in_left;
-static unsigned char out_byte;
-static int out_used;
-
-/* stream error numbers captured when the failing operation runs */
-static unsigned char in_error;
-static unsigned char out_error;
-
-/* data bits moved by the last input: the boot load uses it */
-static size last_input_bits;
-
-/* the boot load runs in the first tick; it adds the status record */
-static int boot_pending = 0;
 
 /* test one space bit (bit 0 of a byte is the high bit) */
 static inline int space_bit(size_t p)
@@ -72,7 +42,7 @@ static inline void space_set_bit(size_t p, int v)
 }
 
 /* return instruction argument: value bit k at position src + k */
-static inline size get_argument(size src, size n)
+size space_get(size at, size n)
 {
   size v = 0;
   size k;
@@ -81,14 +51,14 @@ static inline size get_argument(size src, size n)
   if(n > sizeof v * CHAR_BIT)
     n = (size)(sizeof v * CHAR_BIT);
   for(k = 0; k < n; ++k)
-    if(space_bit(src + k))
+    if(space_bit(at + k))
       v = (size)(v | (size)1 << k);
   return v;
 }
 
 /* write instruction argument: value bit k at position at + k
  * fast path: one read-modify-write per touched byte */
-static inline void store_argument(size n, size value, size at)
+void space_put(size n, size value, size at)
 {
   unsigned char *q;
   unsigned int off;
@@ -239,9 +209,9 @@ static inline void fetch_instruction_at(size i, size base)
 {
   if((size_t)i >= proc_n)
     return;
-  processor[i][0] = get_argument(base + o[0], s[0]);
-  processor[i][1] = get_argument(base + o[1], s[1]);
-  processor[i][2] = get_argument(base + o[2], s[2]);
+  processor[i][0] = space_get(base + o[0], s[0]);
+  processor[i][1] = space_get(base + o[1], s[1]);
+  processor[i][2] = space_get(base + o[2], s[2]);
 }
 
 /* write parsed instruction bit string to processor positions (init) */
@@ -249,36 +219,9 @@ static inline void store_instruction(size i, size n, size dst, size src)
 {
   if((size_t)i >= proc_n)
     return;
-  store_argument(s[0], n, instruction_size * i + o[0]);
-  store_argument(s[1], dst, instruction_size * i + o[1]);
-  store_argument(s[2], src, instruction_size * i + o[2]);
-}
-
-/* bits in the status tail of an input (eof, errno, size) */
-static inline size read_status_bits(void)
-{
-  return (size)(EOF_BITS + ERR_BITS + nfield_bits);
-}
-
-/* bits in the status tail of an output (errno, size) */
-static inline size write_status_bits(void)
-{
-  return (size)(ERR_BITS + nfield_bits);
-}
-
-/*
- * 8-bit error number of a stream: 0 when clean, else the code captured
- * at the failed operation (or ERR_IO when there is no code)
- */
-static unsigned char op_errno(FILE *f, unsigned char stored)
-{
-  if(f == NULL)
-    return (unsigned char)ERR_IO;
-  if(!ferror(f))
-    return 0;
-  if(stored)
-    return stored;
-  return (unsigned char)ERR_IO;
+  space_put(s[0], n, instruction_size * i + o[0]);
+  space_put(s[1], dst, instruction_size * i + o[1]);
+  space_put(s[2], src, instruction_size * i + o[2]);
 }
 
 /* channel streams default to stdio (already assigned ones stay, for tests) */
@@ -288,221 +231,14 @@ static inline void init_channels(void)
     channel_in = stdin;
   if(channel_out == NULL)
     channel_out = stdout;
-  in_byte = 0;
-  in_left = 0;
-  out_byte = 0;
-  out_used = 0;
 }
 
 /*
- * input: half-interval [addr_bits, addr_bits + n_bits); data first,
- * then the status tail (eof, errno, size). return 0 on a channel
- * transfer, -1 when there is no stream.
- */
-/* bulk input staging: one fread per chunk instead of one per byte */
-#define INPUT_CHUNK_BITS ((size)32768)
-int space_input(size n_bits, size addr_bits, FILE *f)
-{
-  size data, moved, base, take;
-  last_input_bits = 0;
-  if(f == NULL)
-    return -1;
-  /*
-   * No in-space bounds check and no check that n_bits holds the status
-   * tail: part of the space mechanism lives in the space itself, so the
-   * program guarantees both and the emulator trusts the program. A too
-   * small n_bits is a program error, not an emulator case.
-   */
-  data = (size)(n_bits - read_status_bits());
-  moved = 0;
-  /* drain the few leftover stream bits first, if any */
-  if(in_left != 0 && moved < data)
-  {
-    if((size)in_left < (size)(data - moved))
-      take = (size)in_left;
-    else
-      take = (size)(data - moved);
-    bitcpy(take, &in_byte, (size_t)(CHAR_BIT - in_left), space, (size_t)(addr_bits + moved));
-    in_left -= (int)take;
-    moved = (size)(moved + take);
-  }
-  while(moved < data)
-  {
-    /* in_left == 0 on entry: pull a whole chunk, consume it at once */
-    unsigned char buf[(size_t)INPUT_CHUNK_BITS / CHAR_BIT];
-    size rest = (size)(data - moved);
-    size want = (size)((rest + CHAR_BIT - 1) / CHAR_BIT);
-    size bits, excess;
-    size_t got;
-    if(want > INPUT_CHUNK_BITS / CHAR_BIT)
-      want = INPUT_CHUNK_BITS / CHAR_BIT;
-    got = fread(buf, 1, (size_t)want, f);
-    if(got == 0)
-    {
-      if(ferror(f) && in_error == 0)
-      {
-        if(errno)
-          in_error = (unsigned char)errno;
-        else
-          in_error = (unsigned char)ERR_IO;
-      }
-      break;
-    }
-    bits = (size)got * CHAR_BIT;
-    if(bits > rest)
-      bits = rest;
-    /* one wide transfer per chunk: bitcpy picks its own fast path */
-    bitcpy(bits, buf, 0, space, (size_t)(addr_bits + moved));
-    moved = (size)(moved + bits);
-    /* excess (< 8) stream bits stay buffered for the next transfer */
-    excess = (size)got * CHAR_BIT - bits;
-    if(excess)
-    {
-      in_byte = buf[bits / CHAR_BIT];
-      in_left = (int)excess;
-    }
-  }
-  base = (size)(addr_bits + data);
-  if(feof(f))
-    space_set_bit((size_t)base, 1);
-  else
-    space_set_bit((size_t)base, 0);
-  store_argument(ERR_BITS, op_errno(f, in_error), (size)(base + EOF_BITS));
-  store_argument(nfield_bits, moved, (size)(base + EOF_BITS + ERR_BITS));
-  last_input_bits = moved;
-  return 0;
-}
-
-/*
- * output: half-interval [addr_bits, addr_bits + n_bits); data first,
- * then the status tail (errno, size). bits stay collected until a
- * byte is full. return 0 on a channel transfer, -1 when there is no
- * stream.
- */
-/* bulk output staging: gather whole bytes with one bitcpy, one fwrite */
-#define OUTPUT_CHUNK_BITS ((size)32768)
-int space_output(size n_bits, size addr_bits, FILE *f)
-{
-  size data, moved, base, take;
-  if(f == NULL)
-    return -1;
-  /*
-   * No in-space bounds check and no check that n_bits holds the status
-   * tail: part of the space mechanism lives in the space itself, so the
-   * program guarantees both and the emulator trusts the program. A too
-   * small n_bits is a program error, not an emulator case.
-   */
-  data = (size)(n_bits - write_status_bits());
-  moved = 0;
-  /* complete a partially filled output byte first, if any */
-  {
-  int io_failed = 0;
-  if(out_used != 0 && moved < data)
-  {
-    if((size)(CHAR_BIT - out_used) < (size)(data - moved))
-      take = (size)(CHAR_BIT - out_used);
-    else
-      take = (size)(data - moved);
-    bitcpy(take, space, (size_t)(addr_bits + moved), &out_byte, (size_t)out_used);
-    out_used += (int)take;
-    moved = (size)(moved + take);
-    if(out_used == CHAR_BIT)
-    {
-      unsigned char b = out_byte;
-      out_used = 0;
-      out_byte = 0;
-      if(fwrite(&b, 1, 1, f) != 1)
-      {
-        if(ferror(f) && out_error == 0)
-        {
-          if(errno)
-            out_error = (unsigned char)errno;
-          else
-            out_error = (unsigned char)ERR_IO;
-        }
-        io_failed = 1;
-      }
-    }
-  }
-  /* bulk: whole bytes gathered by one bitcpy and written by one fwrite */
-  while(!io_failed && moved < data)
-  {
-    unsigned char buf[(size_t)OUTPUT_CHUNK_BITS / CHAR_BIT];
-    size rest = (size)(data - moved);
-    size chunk = (size)(rest - rest % CHAR_BIT);
-    size_t nbytes, got;
-    if(chunk == 0)
-      break;
-    if(chunk > OUTPUT_CHUNK_BITS)
-      chunk = OUTPUT_CHUNK_BITS;
-    nbytes = (size_t)(chunk / CHAR_BIT);
-    bitcpy(chunk, space, (size_t)(addr_bits + moved), buf, 0);
-    got = fwrite(buf, 1, nbytes, f);
-    if(got < nbytes)
-    {
-      /* count the failed byte like the byte path (gathered bits count) */
-      moved = (size)(moved + ((size)got + 1) * CHAR_BIT);
-      if(moved > data)
-        moved = data;
-      if(ferror(f) && out_error == 0)
-      {
-        if(errno)
-          out_error = (unsigned char)errno;
-        else
-          out_error = (unsigned char)ERR_IO;
-      }
-      io_failed = 1;
-      break;
-    }
-    moved = (size)(moved + chunk);
-  }
-  /* tail (< 8 bits) stays buffered exactly like the byte path leaves it */
-  if(!io_failed && moved < data)
-  {
-    take = (size)(data - moved);
-    bitcpy(take, space, (size_t)(addr_bits + moved), &out_byte, (size_t)out_used);
-    out_used += (int)take;
-    moved = (size)(moved + take);
-  }
-  }
-  base = (size)(addr_bits + data);
-  store_argument(ERR_BITS, op_errno(f, out_error), base);
-  store_argument(nfield_bits, moved, (size)(base + ERR_BITS));
-  return 0;
-}
-
-/* write collected output bits (zero padded) at program end */
-void channel_flush(void)
-{
-  if(out_used && channel_out != NULL)
-  {
-    fwrite(&out_byte, 1, 1, channel_out);
-    out_used = 0;
-  }
-}
-
-/* zero the count field of every instruction: the processor holds only NOPs */
-static void stop_processor(void)
-{
-  size base;
-  size isz = instruction_size;
-  size w = nfield_bits;
-  size_t i;
-  if(proc_n == 0 || w == 0 || isz == 0)
-    return;
-  base = (size)(PROCESSOR_START + o[0]);
-  for(i = 0; i < proc_n; ++i)
-  {
-    store_argument(w, 0, base);
-    base = (size)(base + isz);
-  }
-}
-
-/*
- * execute the already fetched i-th instruction:
- * ordinary copy, input, or output. NOP (n = 0) does nothing.
- * The boot load is the first instruction of the first tick:
- * it reads N*instruction bits and adds the status record.
+ * execute the already fetched i-th instruction: an ordinary in-space
+ * copy. NOP (n = 0) does nothing. A copy that touches the channel area
+ * (position >= space_nbits) is served by sys_tick, not here; if that
+ * area is not a live channel the copy is skipped (those positions do not
+ * belong to the space buffer).
  */
 void run_instruction(size i)
 {
@@ -512,28 +248,10 @@ void run_instruction(size i)
   n = processor[i][0];
   dst = processor[i][1];
   src = processor[i][2];
-  if(boot_pending && i == 0)
-  {
-    boot_pending = 0;
-    space_input((size)(n + read_status_bits()), dst, channel_in);
-    if(last_input_bits < n)
-      stop_processor();
-    return;
-  }
   if(n == 0)
     return;
-  if((size_t)src == space_nbits && (size_t)dst == space_nbits)
+  if(dst >= (size)space_nbits || src >= (size)space_nbits)
     return;
-  if((size_t)src == space_nbits)
-  {
-    space_input(n, dst, channel_in);
-    return;
-  }
-  if((size_t)dst == space_nbits)
-  {
-    space_output(n, src, channel_out);
-    return;
-  }
   /*
    * No in-space bounds check: part of the space mechanism lives in the
    * space itself, so the program guarantees both half-intervals lie
@@ -589,16 +307,17 @@ int computation(void)
   }
   if(!state)
     return 0;
+  sys_tick();
   for(i = 0; i < proc_n; ++i)
     if(processor[i][0])
       run_instruction((size)i);
   return 1;
 }
 
-/* allocate space, write the single boot instruction bit string */
+/* allocate the space and seed slot 0 with an ordinary load copy */
 void init_space(void)
 {
-  size boot_n;
+  size boot_n, stdin_pos;
   size_t nbytes;
   size_t nproc;
 #ifdef SIGPIPE
@@ -610,6 +329,7 @@ void init_space(void)
     exit(EXIT_USAGE);
   }
   init_channels();
+  sys_init();
   /* overflow-safe: (space_nbits + CHAR_BIT - 1) / CHAR_BIT without addition */
   nbytes = space_nbits / (size_t)CHAR_BIT + (space_nbits % (size_t)CHAR_BIT != 0);
   if(proc_n > SIZE_MAX / sizeof *processor)
@@ -627,11 +347,17 @@ void init_space(void)
   }
   memset(space, 0, nbytes);
   memset(processor, 0, nproc);
-  /* safe: parse_config guarantees proc_n * instruction_size <= space_nbits */
+  /*
+   * Seed slot 0 with an ordinary copy that reads the image from the
+   * stdin channel into the processor. The host seeds the slot (before
+   * the first tick there is no program); the instruction itself has no
+   * special meaning. safe: parse_config guarantees
+   * proc_n * instruction_size <= space_nbits and that it fits field n.
+   */
   boot_n = (size)((size_t)proc_n * (size_t)instruction_size);
+  stdin_pos = sys_device_pos(0);
   processor[0][0] = boot_n;
   processor[0][1] = PROCESSOR_START;
-  processor[0][2] = (size)space_nbits;
-  store_instruction(0, boot_n, PROCESSOR_START, (size)space_nbits);
-  boot_pending = 1;
+  processor[0][2] = stdin_pos;
+  store_instruction(0, boot_n, PROCESSOR_START, stdin_pos);
 }

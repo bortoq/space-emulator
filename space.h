@@ -13,10 +13,10 @@
  * Instruction field widths follow the space size: address bits =
  * ceil(log2(space bits + 1)), count field one bit less, instruction =
  * 2*address bits + count bits (computed in parse_config).
- * The single channel, DATA, is the position just after the space
- * (space_nbits). Channel access transfers any number of bits at any
- * bit position; stream bits continue across accesses. A transfer
- * carries its own status in the tail of its half-interval (see engine.c).
+ * The position after the space (space_nbits) begins the channel area:
+ * SYS at space_nbits, then the device channels pre-bound at start (see
+ * sys_ctrl.h). A copy that touches a channel is served by the emulator,
+ * not by the space buffer.
  */
 #ifndef SPACE_H_
 #define SPACE_H_
@@ -47,15 +47,14 @@ enum {
  * limits (checked at startup, derived in parse_config; no artificial
  * caps on -s/-p besides memory):
  * proc_n >= 1,
- * proc_n * instruction_size + (EOF_BITS + ERR_BITS + nfield_bits)
- * <= space_nbits
- * (processor plus the boot read status record),
+ * proc_n * instruction_size <= space_nbits
+ * (the processor fits in the space),
  * proc_n * instruction_size <= 2^nfield_bits - 1
- * (the boot instruction count must fit the count field).
+ * (the seed count must fit the count field).
  * Field widths follow the space size, so smaller spaces use narrower
  * fields. With default sizes the format is 16+15 = 47 bits and
  * proc_n <= 697. The smallest space is -s 27 -p 1 (one 14-bit
- * instruction plus the boot status record). Larger -s/-p are allowed
+ * instruction). Larger -s/-p are allowed
  * as long as the two fit relations hold (plus available memory);
  * there is no SPACE_BITS_MAX and no separate -p cap.
  */
@@ -69,6 +68,10 @@ extern uint64_t tick_limit;       /* -t (0 means no limit) */
 extern size address_bits;         /* bits in "dst"/"src" */
 extern size nfield_bits;          /* bits in "n" */
 extern size instruction_size;     /* bits in "copy n, dst, src" */
+
+/* read/write a numeric field: value bit k at bit address at + k */
+size space_get(size at, size n);
+void space_put(size n, size value, size at);
 
 /*
  * copy bits from one array to another (n, src, s, dst, d).
@@ -91,9 +94,6 @@ extern FILE *channel_out;        /* output stream (stdout by default) */
 void run_instruction(size i);    /* execute the already read i-th instruction */
 int computation(void);           /* tick: state 1 if executed, 0 if all NOP */
 void parse_config(int argc, char **argv); /* flags -s/-p/-t, limit checks */
-void init_space(void);           /* allocation, boot instruction, channels */
-int space_input(size n_bits, size addr_bits, FILE *f);  /* f -> space, 0 ok */
-int space_output(size n_bits, size addr_bits, FILE *f); /* space -> f, 0 ok */
-void channel_flush(void);        /* write collected output bits at program end */
+void init_space(void);           /* allocation, seed, channels */
 
 #endif /* SPACE_H_ */

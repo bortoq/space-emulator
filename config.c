@@ -6,6 +6,7 @@
  * Usage: space [-s bits] [-p num] [-t ticks] < user_space > result.
  */
 #include "space.h"
+#include "proto_gen.h"
 #include <errno.h>
 
 /* usage and exit */
@@ -51,7 +52,7 @@ static const char *flag_value(int *i, int argc, char **argv, const char *arg)
 
 /*
  * field widths from the space size: address bits a = ceil(log2 space bits + 1)
- * (positions 0..space_nbits, the last one is the DATA channel),
+ * (positions 0..2^a-1; positions space_nbits..2^a-1 are channels),
  * count field one bit less, instruction = 2*address + count
  */
 static void compute_format(void)
@@ -81,7 +82,6 @@ static void compute_format(void)
 void parse_config(int argc, char **argv)
 {
   int i;
-  size_t record;
   size_t maxboot;
   for(i = 1; i < argc; ++i)
   {
@@ -107,12 +107,25 @@ void parse_config(int argc, char **argv)
     usage();
   }
   compute_format();
-  record = (size_t)EOF_BITS + (size_t)ERR_BITS + (size_t)nfield_bits;
-  if(space_nbits <= record
-     || proc_n > (space_nbits - record) / (size_t)instruction_size)
+  if(proc_n > space_nbits / (size_t)instruction_size)
   {
-    fprintf(stderr, "space: need processor instructions plus the boot status record (-s/-p)\n");
+    fprintf(stderr, "space: the processor must fit the space (-s/-p)\n");
     usage();
+  }
+  /*
+   * the channel area is the positions space_nbits .. 2^a-1: it must hold
+   * SYS plus every device pre-bound at start (see sys_ctrl.c). Otherwise
+   * the emulator cannot bind the channels the program needs.
+   */
+  if(address_bits < (size)(sizeof(size_t) * CHAR_BIT))
+  {
+    size_t positions = (size_t)1 << address_bits;
+    if(space_nbits + 1 + PROTO_NDEVS > positions)
+    {
+      fprintf(stderr,
+              "space: not enough room for the SYS and device channels (-s)\n");
+      usage();
+    }
   }
   if(nfield_bits >= (size)(sizeof(size_t) * CHAR_BIT))
   {
@@ -122,7 +135,7 @@ void parse_config(int argc, char **argv)
   maxboot = (((size_t)1 << nfield_bits) - 1) / (size_t)instruction_size;
   if(proc_n > maxboot)
   {
-    fprintf(stderr, "space: boot count does not fit the n field (-s/-p)\n");
+    fprintf(stderr, "space: seed count does not fit the n field (-s/-p)\n");
     usage();
   }
 }

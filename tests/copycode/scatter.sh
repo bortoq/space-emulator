@@ -18,7 +18,7 @@
 # CTRL1 взводит CTRL2; тик3: сбор, CTRL2 взводит выход; тик4: выход
 # один раз. -t 4 даёт ровно 8 байт выхода.
 set -e
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/../.."
 if [ ! -x ./space ]; then
   echo "no ./space, run make first"
   exit 1

@@ -4,3 +4,9 @@ disassembler
 tests/test_bitcpy
 *.o
 *.bin
+
+# keep the checked-in stub loader despite the *.bin rule
+!tests/stub/nop.bin
+
+# opencode agent session state (local only)
+.opencode/goals/

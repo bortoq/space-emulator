@@ -1,9 +1,9 @@
 /*
- * EMULATION OF PARALLEL ADDRESS SPACE (single channel version)
+ * EMULATION OF PARALLEL ADDRESS SPACE (SYS + pre-bound data channels)
  *
  * copyright 2022-12-17, dmitri bortoq, mit license
  *
- * Entry point: flag parsing, boot instruction of the core, engine ticks.
+ * Entry point: flag parsing, seed of the core, engine ticks.
  * Usage: space [-s bits] [-p num] [-t ticks] < user_space > result.
  * The program guarantees half-interval non-overlap,
  * the emulator relies on it (never checks).
@@ -28,7 +28,6 @@ int main(int argc, char **argv)
     if(!computation())
       break;
 
-  channel_flush();
   fflush(stdout);
   free(space);
   free(processor);
