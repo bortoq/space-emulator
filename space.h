@@ -28,13 +28,12 @@
 #include <limits.h>
 
 /* types */
-typedef uint32_t  size;  /* large enough for a field value and a position */
+typedef uint64_t  size;  /* field value / position: no artificial cap */
 
 /* defaults and fixed constants (format widths follow the space size) */
 enum {
   SPACE_BITS_DFLT = 0xFFF0, /* -s default (bits) */
   PROC_N_DFLT = 64,         /* -p default (instructions) */
-  SPACE_BITS_MAX = 65536,   /* -s limit (the channel address needs a bits) */
   PROCESSOR_START = 0,      /* bit index of the first instruction */
   N_FIELDS = 3,             /* fields in an instruction: n, dst, src */
   ERR_BITS = 8,             /* status: 8-bit error number (errno) */
@@ -45,8 +44,8 @@ enum {
 };
 
 /*
- * limits (checked at startup, derived in parse_config):
- * 8 <= space_nbits <= SPACE_BITS_MAX,
+ * limits (checked at startup, derived in parse_config; no artificial
+ * caps on -s/-p besides memory):
  * proc_n >= 1,
  * proc_n * instruction_size + (EOF_BITS + ERR_BITS + nfield_bits)
  * <= space_nbits
@@ -55,9 +54,10 @@ enum {
  * (the boot instruction count must fit the count field).
  * Field widths follow the space size, so smaller spaces use narrower
  * fields. With default sizes the format is 16+15 = 47 bits and
- * proc_n <= 697; a `size` index is enough everywhere. The smallest
- * space is -s 27 -p 1 (one 14-bit instruction plus the boot status
- * record).
+ * proc_n <= 697. The smallest space is -s 27 -p 1 (one 14-bit
+ * instruction plus the boot status record). Larger -s/-p are allowed
+ * as long as the two fit relations hold (plus available memory);
+ * there is no SPACE_BITS_MAX and no separate -p cap.
  */
 
 /* configuration (-s, -p, -t; definitions in globals.c) */

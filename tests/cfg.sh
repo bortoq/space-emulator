@@ -3,8 +3,8 @@
 # -t (ticks). Defaults: 65520, 64, no limit. Field widths follow the
 # space size: address bits a = ceil(log2 space bits + 1) (positions
 # 0..space bits; the last position is the DATA channel), n field a-1
-# bits, instruction 3a-1 bits. Limits: 8 <= -s <= 65536, processor
-# plus the boot status record must fit
+# bits, instruction 3a-1 bits. No artificial caps on -s/-p (memory
+# only); processor plus the boot status record must fit
 # (-p * instruction + (1+8+n field) <= -s), the boot count must fit
 # the n field (-p * instruction <= 2^(a-1) - 1).
 set -e
@@ -35,10 +35,20 @@ echo "ok: -s 392 -p 8 (load, NOP stop)"
 { head -c 26 /dev/zero; } | timeout 5 ./space -s 384 -p 8 > /tmp/cfg_384.out
 test ! -s /tmp/cfg_384.out
 echo "ok: -s 384 -p 8"
-# largest space: -s 65536 -p 1, instruction 50 bits (17+17+16).
+# large space: -s 65536 -p 1, instruction 50 bits (17+17+16).
 { head -c 7 /dev/zero; } | timeout 5 ./space -s 65536 -p 1 > /tmp/cfg_maxs.out
 test ! -s /tmp/cfg_maxs.out
-echo "ok: -s 65536 -p 1 (largest space)"
+echo "ok: -s 65536 -p 1"
+# no artificial -s cap: above the old 65536 limit.
+{ head -c 7 /dev/zero; } | timeout 5 ./space -s 65537 -p 1 > /tmp/cfg_big1.out
+test ! -s /tmp/cfg_big1.out
+echo "ok: -s 65537 -p 1 (above old cap)"
+{ head -c 7 /dev/zero; } | timeout 5 ./space -s 100000 -p 1 > /tmp/cfg_big2.out
+test ! -s /tmp/cfg_big2.out
+echo "ok: -s 100000 -p 1 (above old cap)"
+{ head -c 7 /dev/zero; } | timeout 5 ./space -s 1000000 -p 1 > /tmp/cfg_big3.out
+test ! -s /tmp/cfg_big3.out
+echo "ok: -s 1000000 -p 1 (above old cap)"
 # maximum processor at defaults: -p 697 (boot 32759 <= 32767).
 { head -c 4 /dev/zero; } | timeout 5 ./space -p 697 -t 1 > /tmp/cfg_max.out
 test ! -s /tmp/cfg_max.out
@@ -60,8 +70,6 @@ check_err ./space -s 22 -p 1 < /dev/null
 check_err ./space -s 25 -p 1 < /dev/null
 check_err ./space -s 26 -p 1 < /dev/null
 check_err ./space -s 4 -p 1 < /dev/null
-check_err ./space -s 65537 < /dev/null
-check_err ./space -s 100000 < /dev/null
 check_err ./space -p 0 < /dev/null
 check_err ./space -p 698 < /dev/null
 check_err ./space -p 5887258746928580303 -s 65520 < /dev/null

@@ -1,5 +1,5 @@
 CC      ?= gcc
-CFLAGS  ?= -std=c11 -Wall -Wextra -O2
+CFLAGS  ?= -std=c11 -Wall -Wextra -O3 -flto
 COMMON  = globals.c bitcopy.c
 ENGINE  = engine.c config.c $(COMMON)
 

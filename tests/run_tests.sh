@@ -3,7 +3,7 @@
 set -e
 cd "$(dirname "$0")/.."
 CC="${CC:-gcc}"
-CFLAGS="-std=c11 -Wall -Wextra -O2"
+CFLAGS="-std=c11 -Wall -Wextra -O3 -flto"
 
 echo "== build =="
 $CC $CFLAGS -o space space.c engine.c config.c globals.c bitcopy.c
@@ -19,6 +19,9 @@ echo "== transfer status =="
 
 echo "== channel bit transfers =="
 ./tests/channels.sh
+
+echo "== scatter/gather roundtrip =="
+./tests/scatter.sh
 
 echo "== sizes and flags =="
 ./tests/cfg.sh

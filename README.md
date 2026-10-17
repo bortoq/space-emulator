@@ -101,10 +101,11 @@ make check          # + tests (tests/run_tests.sh)
 
 # run: space [-s bits] [-p num] [-t ticks] < user_space > result.
 # defaults: 65520 bits, 64 instructions, no tick limit.
-# limits: with a = ceil(log2 (space bits + 1)):
+# limits (no artificial caps on -s/-p besides memory),
+# with a = ceil(log2 (space bits + 1)):
 #   -p * (3a-1) + (1 + 8 + a - 1) <= -s   (processor plus boot status record)
 #   -p * (3a-1) <= 2^(a-1) - 1            (boot count fits field n)
-# a wrong flag or limit gives exit code 2.
+# a wrong flag or fit violation gives exit code 2.
 # smallest space: -s 27 -p 1 (one 14-bit instruction plus the boot record).
 # with defaults: instruction 47 bits, -p up to 697.
 
