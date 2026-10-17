@@ -393,6 +393,24 @@ The compatibility layer as a driver in the space:
 Complexity estimate: **medium**, comparable to the existing in-space
 loader of `copy-space`. Limits and risks — §8.3.
 
+Concrete interface used by the generated adapter (`copy-space`,
+`modules/rv32i_bulk.py`), observable-equivalence contract (§8.3):
+
+- the emulator is launched with `-s space_bytes*8-4`, so its address width
+  equals the generator `address_bits` and the three channel positions fit:
+  SYS = `space_nbits`, stdin = `space_nbits+1`, stdout = `space_nbits+2`;
+- a write is one data copy with `dst = space_nbits+2` and `src = memory_bit
+  + pointer*8`, `n = count*8`; a read is `dst = memory_bit + pointer*8`,
+  `src = space_nbits+1`; the fields are patched (`<<3`) as in the old
+  channel instructions, and the copy is placed in its own block so the host
+  services it in its own tick;
+- the number of bytes moved and the stream status come from SYS `FSTAT`
+  (`op=3`, `chan` = the device position): the request record is a constant
+  literal, the answer is read from the copied rsp record (`status` byte and
+  `moved` field); `a0 = moved|count` on success, `-5` on a stream error;
+- the contract checked against the oracle is the stdout bytes, `a0`, the
+  exit status and guest memory — not the old same-tick channel-status bits.
+
 ### 8.2 Outer boundary: `--core`, `--dump-space`, `--trace`, `--restore`
 
 These are **not channels** but the outer boundary/observability. The
@@ -710,9 +728,10 @@ the Kogge-Stone prefix adder and the reduction trees are in
 (§8.2, decision D1) is in this emulator. The base profile (no host
 channels) reproduces `rv32i_reference.execute` on 94 programs on the new
 emulator (`tests/test_rv32i_bulk.py`), and the schedule invariants
-(disjointness, patch distance >= 2) are checked at generation. Deferred:
-the io/report profiles (need the channel adapter §8.1), the state/trace
-observability, and the in-space seed loader (§8.9.2).
+(disjointness, patch distance >= 2) are checked at generation. The io profile is implemented through the
+channel adapter of §8.1 (data copies + SYS `FSTAT`). Deferred: the
+`report_status`/`state_output` profiles, the trace observability, and the
+in-space seed loader (§8.9.2).
 
 **Decisions (binding).**
 - **D1 (loader).** Implement the **host insert primitive (§8.2)** first. It
