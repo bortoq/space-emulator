@@ -704,10 +704,15 @@ Deferred).
 
 #### 8.10.1 Implementation plan (Variant A: DAG emitter + scheduler + log-depth primitives)
 
-Status: **planned**. This is the concrete plan for the Coder. It replaces
-the "make the primitives tick-explicit" sketch of §8.10 with a scheduler
-that produces a valid bulk-synchronous schedule and keeps the universal
-interpreter (the generator still examines no guest instruction).
+Status: **implemented, first milestone** (base profile). The scheduler,
+the Kogge-Stone prefix adder and the reduction trees are in
+`copy-space/modules/rv32i_bulk.py`; the host insert primitive `--core`
+(§8.2, decision D1) is in this emulator. The base profile (no host
+channels) reproduces `rv32i_reference.execute` on 94 programs on the new
+emulator (`tests/test_rv32i_bulk.py`), and the schedule invariants
+(disjointness, patch distance >= 2) are checked at generation. Deferred:
+the io/report profiles (need the channel adapter §8.1), the state/trace
+observability, and the in-space seed loader (§8.9.2).
 
 **Decisions (binding).**
 - **D1 (loader).** Implement the **host insert primitive (§8.2)** first. It
