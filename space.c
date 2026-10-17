@@ -14,6 +14,7 @@ int main(int argc, char **argv)
 {
   /* configuration and address space */
   uint64_t time;
+  uint64_t executed = 0;
 
   parse_config(argc, argv);
   time = tick_limit;
@@ -25,10 +26,17 @@ int main(int argc, char **argv)
    * stop: all NOP or tick limit)
    */
   while((tick_limit == 0 || time--))
+  {
     if(!computation())
       break;
+    ++executed;
+  }
 
   fflush(stdout);
+#ifdef SPACE_DEV
+  if(getenv("SPACE_TICKS") != NULL)
+    fprintf(stderr, "ticks=%llu\n", (unsigned long long)executed);
+#endif
 #ifdef SPACE_DEV
   if(dump_path != NULL)
   {
