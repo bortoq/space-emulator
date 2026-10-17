@@ -590,6 +590,118 @@ Consequences:
 - bit precision under self-modification depends on the fetch model
   (§12.1).
 
+### 8.9 Copycode modules compensating the difference between the old and the new emulator
+
+The new core is bulk-synchronous: all instructions of a tick are read at
+the start of the tick, all values are updated only after all copies of the
+tick complete, and an instruction field patched in a tick is seen by the
+next tick at the earliest. The old core executed the 256 slots of a tick in
+order with immediate visibility and same-tick self-modification. Everything
+that follows from this difference is compensated by modules in the space,
+not in the core. The core keeps no compatibility code.
+
+| difference | compensating module (copycode) | complexity |
+|---|---|---|
+| order and visibility of copies inside a tick, same-tick field patching | schedule serializer (§8.9.1) or generation-time schedule rewrite (§8.10) | large / large |
+| IN/OUT are `PROCESSOR` slots 1/2 with `2*copied+reason` | channel adapter (§8.1) | medium |
+| `--core` image insertion and `RVS1` stream loading | seed loader (§8.9.2) | medium |
+| `--dump-space` | report/dump layer (§8.5, §8.9.2) | small |
+| `--restore` | install/self-overwrite layer (§8.5, §8.9.2) | medium |
+| `--trace`, `--trace-channels` | tracer layer (§8.8, §8.9.2) | medium |
+| instruction field widths at a power-of-two size (old 24, new 25) | image regeneration, not a module | small |
+| boot: the first tick is launched by the host | seed primitive (host) plus loader layer | small |
+
+#### 8.9.1 Schedule serializer (order-of-copies compatibility)
+
+Purpose: make an old schedule (a tick of 256 ordered copies with immediate
+visibility and same-tick field patching) give the same result under the
+bulk-synchronous tick.
+
+Two routes:
+
+1. **Generation-time rewrite (preferred for images we generate).** The copy
+   schedule of a generated image is static: the guest cannot write into the
+   code layers (the guest range is guarded). Rewrite the generator so that
+   each dependent step is its own tick; see §8.10.
+2. **In-space serializer (deferred fallback, for schedules built at run
+   time).** A resident layer reads the 256 slots of `PROCESSOR`, performs the
+   copy of one slot per tick, and advances the slot cursor, reproducing the
+   old order. It is an interpreter of the old copy format; the slowdown is of
+   the order of the number of slots per tick. It cannot be avoided in the
+   core, because the core must keep parallel instruction loading and
+   parallel copies.
+
+Contract of the serializer: process slots in order; a copy's fields are
+read after all earlier copies of the old tick have committed; a field
+patched by slot `i` is seen by slot `j` with `j > i`; after the last slot,
+publish the result of the old tick as the starting state of the next one.
+
+Status: **deferred**. The in-space serializer itself, and the general
+translator and optimizer of schedules, are not built now; they are needed
+only when a run-time-built old schedule or a non-generated static image has
+to be reproduced (§11, Deferred). The route to running the ported
+components in the near term is the generation-time rewrite of §8.10.
+
+#### 8.9.2 Boundary modules (loader, dump, restore, tracer)
+
+Same contract shape as §8.1: a resident layer, driven once per tick,
+exchanging with the host only through `SYS` and the pre-bound data
+channels.
+
+- **seed loader** — reads a self-describing image (`RVS1` header) from the
+  `stdin` channel and lays it out by positions, including its own area
+  (self-overwrite/trampoline, §8.5).
+- **report/dump layer** — streams the whole space to the `stdout` channel;
+  deterministic, includes itself.
+- **install/restore layer** — reads an image, lays it out, passes control to
+  the restored entry point; recovers cursors and reopens descriptors
+  deterministically (§8.5, §8.6).
+- **tracer layer** — writes `copy`/`channel`/`stop` events to a separate
+  debug channel (§8.8).
+
+Complexity: small to medium each. They replace the host flags
+`--core`/`--dump-space`/`--restore`/`--trace`; the host keeps only the
+minimal primitive (insert an image, launch, tick boundary) (§8.2).
+
+### 8.10 Rewriting RV32I for the new space
+
+Why: `modules/rv32i.py` builds a static schedule that relies on same-tick
+visibility, which the new tick forbids (and which §8.3.1 rules out as a
+contract). Concretely:
+
+- the adder (`add`) writes the carry of bit `i` and reads it at bit `i+1`
+  in the same tick; the whole 32-bit carry chain is one tick;
+- `lookup`/`gate` patch the `src` field of a reading instruction and read
+  it in the same layer;
+- `dispatch`/`branch`/`jump` resolve the next layer from fields patched in
+  the same layer.
+
+What to change: make the generator primitives tick-explicit; the bodies of
+the 40 guest instructions stay nearly unchanged.
+
+- `add` — carry as its own tick per bit first, then a parallel-carry
+  (carry-lookahead) scheme;
+- `reduce_or`/`reduce_and` — a tree instead of a linear chain;
+- `lookup`/`gate`/`dispatch` — a patch tick and a read tick;
+- `guard`/`branch`/`jump` — resolve the next layer in the following tick;
+- layer/link mechanism — unchanged: slot 255 copying the next layer into
+  `PROCESSOR` is already next-tick in both cores.
+
+Format and channels: regenerate the image with the new address width;
+the old IN/OUT go through the channel adapter (§8.1).
+
+Validation: differential against the old results — the `copy-space` units
+(`ctype`, `sort`, `string`, `rbtree`, `atomic`, `init/main`) and the GCC
+integrated runs; compare the result and, at the first step, the trace.
+
+Complexity: **large**; this is the main cost of the migration. It is
+preferred to a general translator and optimizer for the generated images
+(§8.9.1), because the generator knows the semantic intent (an adder, a
+disjunction) and can target the minimum dependence depth directly. The
+general translator and optimizer are **deferred** until a run-time-built old
+schedule or a non-generated static image must be reproduced (§11,
+Deferred).
+
 ## 9. Device access and debugging
 
 Principle: **the emulator is a minimal substrate.** All logic that can be
@@ -703,8 +815,21 @@ post: with valid n/buffer: [buf,buf+bytes*8) is filled (IN) or output
 8. **(separately) device-model/agent** for the GPU class: buffer registry,
    poll/events; outside the channel core.
 
+9. **RV32I for the new space** (§8.10): make the generator primitives
+   tick-explicit, regenerate the image, validate differentially.
+10. **Boundary modules** (§8.9.2): seed loader, dump, install and tracer in
+    the space; the host keeps only the insert and launch primitive.
+
 Every phase: `make check` green, the space format unchanged, bit
 compatibility of `copy-space` images kept.
+
+#### Deferred (later, only if needed)
+
+- **Schedule serializer and general translator/optimizer** (§8.9.1): build
+  only when a run-time-built old schedule or a non-generated static image
+  must be reproduced. Until then the generation-time rewrite (§8.10) is the
+  whole path to running the ported components, and no separate schedule
+  translator or optimizer is written.
 
 ---
 
