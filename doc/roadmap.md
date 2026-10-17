@@ -709,6 +709,18 @@ the "make the primitives tick-explicit" sketch of §8.10 with a scheduler
 that produces a valid bulk-synchronous schedule and keeps the universal
 interpreter (the generator still examines no guest instruction).
 
+**Decisions (binding).**
+- **D1 (loader).** Implement the **host insert primitive (§8.2)** first. It
+  unblocks end-to-end differential runs with the least work. The in-space seed
+  loader (§8.9.2) stays deferred to phase 10 and is **not** on the critical
+  path of §8.10. Primitive-level tests may use small images that fit the seed.
+- **D2 (space size).** Keep the existing 2 MiB image
+  (`SPACE_BYTES = 2097152`, `a = 24`, `isz = 71`) as the default, because it
+  matches the old `INSN_BITS` exactly. Only if the measured `layers` exceeds
+  the code-region budget do we widen the space (emulator `-s`, generator
+  `SPACE_BYTES`/`ADDRESS_BITS`); this changes `a`, `isz` and `layer_bits`.
+  Prefer reducing depth (primitive parallelism, then `proc_n`) before widening.
+
 **Goal.** Regenerate the RV32I images so that every tick is a set of
 pairwise-disjoint copies (the bulk-synchronous contract).
 
