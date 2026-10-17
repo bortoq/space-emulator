@@ -10,3 +10,4 @@ tests/test_bitcpy
 
 # opencode agent session state (local only)
 .opencode/goals/
+space-dev

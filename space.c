@@ -29,6 +29,24 @@ int main(int argc, char **argv)
       break;
 
   fflush(stdout);
+#ifdef SPACE_DEV
+  if(dump_path != NULL)
+  {
+    size_t nbytes = space_nbits / (size_t)CHAR_BIT
+                  + (space_nbits % (size_t)CHAR_BIT != 0);
+    FILE *f = fopen(dump_path, "wb");
+    if(f == NULL || fwrite(space, 1, nbytes, f) != nbytes)
+    {
+      fprintf(stderr, "space: cannot write dump %s\n", dump_path);
+      if(f != NULL)
+        fclose(f);
+      free(space);
+      free(processor);
+      return EXIT_USAGE;
+    }
+    fclose(f);
+  }
+#endif
   free(space);
   free(processor);
   return 0;

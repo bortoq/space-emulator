@@ -30,6 +30,10 @@ echo "== wide format =="
 echo "== boot =="
 ./tests/boot.sh
 
+echo "== --core host insert primitive =="
+$CC $CFLAGS -DSPACE_DEV -o ./space-dev space.c engine.c config.c sys_ctrl.c globals.c bitcopy.c
+./tests/core.sh
+
 echo "== copycode: in-space SYS driver =="
 ./tests/copycode/sys_driver.sh
 

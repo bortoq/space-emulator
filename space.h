@@ -63,6 +63,8 @@ enum {
 extern size_t space_nbits;        /* bits in the space */
 extern size_t proc_n;             /* instructions in the processor */
 extern uint64_t tick_limit;       /* -t (0 means no limit) */
+extern const char *core_path;    /* --core FILE: raw space image to insert */
+extern const char *dump_path;    /* --dump-space FILE: space after run (SPACE_DEV) */
 
 /* format derived from the space size (computed in parse_config) */
 extern size address_bits;         /* bits in "dst"/"src" */

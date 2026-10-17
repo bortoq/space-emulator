@@ -11,6 +11,8 @@
 size_t space_nbits = SPACE_BITS_DFLT;
 size_t proc_n = PROC_N_DFLT;
 uint64_t tick_limit = 0;
+const char *core_path = NULL;   /* --core FILE (host insert primitive, roadmap 8.2) */
+const char *dump_path = NULL;   /* --dump-space FILE (development build only) */
 
 size address_bits = 0;         /* bits in dst/src fields */
 size nfield_bits = 0;          /* bits in the n field */

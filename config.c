@@ -12,7 +12,7 @@
 /* usage and exit */
 static void usage(void)
 {
-  fprintf(stderr, "usage: space [-s bits] [-p num] [-t ticks]\n");
+  fprintf(stderr, "usage: space [-s bits] [-p num] [-t ticks] [--core FILE]\n");
   exit(EXIT_USAGE);
 }
 
@@ -86,6 +86,26 @@ void parse_config(int argc, char **argv)
   for(i = 1; i < argc; ++i)
   {
     const char *arg = argv[i];
+    if(arg[0] == '-' && arg[1] == '-')
+    {
+      if(strcmp(arg, "--core") == 0)
+      {
+        if(++i >= argc)
+          usage();
+        core_path = argv[i];
+        continue;
+      }
+#ifdef SPACE_DEV
+      if(strcmp(arg, "--dump-space") == 0)
+      {
+        if(++i >= argc)
+          usage();
+        dump_path = argv[i];
+        continue;
+      }
+#endif
+      usage();
+    }
     if(arg[0] != '-' || arg[1] == 0)
       usage();
     switch(arg[1])

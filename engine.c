@@ -348,6 +348,37 @@ void init_space(void)
   memset(space, 0, nbytes);
   memset(processor, 0, nproc);
   /*
+   * --core FILE: the host insert primitive (roadmap 8.2). The file is a
+   * raw space image (MSB-first bytes, the same layout the space buffer
+   * uses); it replaces the seed, so the first tick fetches the entry
+   * layer straight from position 0. A short file is zero padded by the
+   * initial memset. Without --core the seed path below is used.
+   */
+  if(core_path != NULL)
+  {
+    FILE *f = fopen(core_path, "rb");
+    if(f == NULL)
+    {
+      fprintf(stderr, "space: cannot open core %s\n", core_path);
+      exit(EXIT_USAGE);
+    }
+    if(fread(space, 1, nbytes, f) < nbytes && ferror(f))
+    {
+      fprintf(stderr, "space: cannot read core %s\n", core_path);
+      fclose(f);
+      exit(EXIT_USAGE);
+    }
+    clearerr(f);
+    if(ferror(f))
+    {
+      fprintf(stderr, "space: cannot read core %s\n", core_path);
+      fclose(f);
+      exit(EXIT_USAGE);
+    }
+    fclose(f);
+    return;
+  }
+  /*
    * Seed slot 0 with an ordinary copy that reads the image from the
    * stdin channel into the processor. The host seeds the slot (before
    * the first tick there is no program); the instruction itself has no
