@@ -10,10 +10,19 @@ are kept separate from the emulator tests in `tests/`.
   loader, the `SYS` request/answer builder, the IN/OUT compatibility
   layer, the tracer, and so on.
 
-No copycode ships yet: the run environment supplies the loader (the
-`copy-space` project) and this repository carries only a stub
-(`tests/stub/`). The files here document the intended copycode contracts
-and are not run by `make check`.
+## Run
+
+`sys_driver.sh` is run by `make check`: `tools/sys_gen.py` builds an
+in-space program that issues an `FSTAT` request through `SYS`, reads the
+answer back through `SYS`, and writes it to the `stdout` channel
+(roadmap §11 phase 3). The other files here document the intended
+copycode contracts and are not run by `make check` yet.
+
+No copycode ships in the run environment: the loader (the `copy-space`
+project) supplies it and this repository carries only a stub
+(`tests/stub/`). `tools/sys_gen.py` and `tools/driver_gen.py` generate the
+copy programs the tests here run.
 
 `scatter.sh` is the bit-by-bit scatter/gather roundtrip; it targets the
-copycode layer and is kept as a specification until that layer exists.
+old `DATA`-channel model and is kept as a specification until that
+compatibility layer exists (§8.1, §11 phase 4).

@@ -1,7 +1,8 @@
 #!/bin/sh
 # Emulator checks (host side: engine, bit copy, config, SYS protocol,
-# channel data path). Copycode tests live separately in tests/copycode/
-# and are not run here; tests/legacy/ keeps old DATA-channel sequences.
+# channel data path) plus the in-space SYS driver copycode (roadmap §11
+# phase 3). tests/copycode/scatter.sh stays a specification (old DATA
+# channels); tests/legacy/ keeps old DATA-channel sequences.
 set -e
 cd "$(dirname "$0")/.."
 CC="${CC:-gcc}"
@@ -28,5 +29,8 @@ echo "== wide format =="
 
 echo "== boot =="
 ./tests/boot.sh
+
+echo "== copycode: in-space SYS driver =="
+./tests/copycode/sys_driver.sh
 
 echo "ALL CHECKS PASSED"
