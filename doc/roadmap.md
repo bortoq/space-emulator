@@ -702,6 +702,118 @@ general translator and optimizer are **deferred** until a run-time-built old
 schedule or a non-generated static image must be reproduced (§11,
 Deferred).
 
+#### 8.10.1 Implementation plan (Variant A: DAG emitter + scheduler + log-depth primitives)
+
+Status: **planned**. This is the concrete plan for the Coder. It replaces
+the "make the primitives tick-explicit" sketch of §8.10 with a scheduler
+that produces a valid bulk-synchronous schedule and keeps the universal
+interpreter (the generator still examines no guest instruction).
+
+**Goal.** Regenerate the RV32I images so that every tick is a set of
+pairwise-disjoint copies (the bulk-synchronous contract).
+
+**Metrics.**
+- `layers` = number of generated layers = number of ticks on a straight-line
+  path;
+- `image` = `layers * layer_bits`.
+- Acceptance: (1) every layer's copies are pairwise disjoint (checked at
+  generation); (2) `layers <= budget`; (3) the regenerated image reproduces
+  the old results against `rv32i_reference.execute` (state frames and guest
+  memory); (4) no reliance on same-tick visibility.
+
+**Pipeline.** Split `modules/rv32i.py` into three parts. The primitive API
+and the 40 instruction bodies stay unchanged.
+
+1. **Frontend** (unchanged API): `emit`, `lookup`, `gate`, `add`,
+   `reduce_or`, `dispatch`, `branch`, `jump`, `immediate`, `validate`, ...
+   append typed **nodes** instead of raw `Copy` ops.
+2. **Scheduler**: assigns every node a level and a slot; builds layers.
+3. **Backend**: lays out layer homes, resolves symbolic positions, encodes
+   the new format, writes the manifest.
+
+**Node model.**
+- Kinds: `ValueCopy(n, dst, src)`, `FieldPatch(instr, field, offset, width,
+  src)`, `Link(next)`.
+- Positions are symbolic: `Const(bit)` or `Field(instr, name, offset)`,
+  resolved after packing.
+- Every node keeps its read half-interval and its write descriptor.
+
+**Level assignment (ASAP, emission order).**
+- Process nodes in emission order. The old program is one
+  sequentially-consistent order; preserving it preserves all read-after-write
+  and write-after-write dependences (safe, not minimal).
+- Maintain `avail[pos] = level` of the latest write to `pos`.
+- `ValueCopy`: `level = 1 + max(avail[p] for p in reads)`, `0` when the read
+  is static data; then set `avail[p] = level` for the written range.
+- `FieldPatch`: same formula on its index reads; it additionally records a
+  **minimum-distance-2 edge** to its target instruction.
+- Instruction execution: `level = max(1 + max(avail[reads]),
+  max(patch_level + 2))`.
+
+**Why `+2` (invariant P1).** A patch at layer `L` writes the target's home
+`H_M`; the link at layer `M-1` reads `H_M`; the write must precede the read,
+so `L <= M-2`, i.e. `M >= L+2`. The patch then writes `H_{L+2}` while the
+same layer's link reads `H_{L+1}` — disjoint (invariant **P2**). No
+instruction is patched in the processor region: `resolve(Field)` always
+returns the target's home, `H_target.level + target.slot*isz + offset`
+(the old same-layer `base = 0` branch is removed).
+
+**Layer packing.**
+- Layer `k` is `layer_bits = proc_n * isz` bits at home
+  `H_k = code_base + k * layer_bits`.
+- Up to `proc_n - 1` instructions per layer; slot `proc_n - 1` holds the
+  `Link`.
+- Pack nodes by level. If a level exceeds `proc_n - 1`, split it into
+  consecutive layers and raise the level of all dependents to a fixed point.
+- Pad empty layers where `+2` headroom is missing at a block end.
+- Layer `k`'s link targets layer `k+1`, except a block's last layer, whose
+  link targets the successor block's entry layer (constant, or a patched
+  `Field`).
+
+**Primitives to rewrite.**
+
+| primitive | from | to |
+|---|---|---|
+| `add`/`sub` | 32-stage ripple carry | parallel prefix (Kogge-Stone): `g_i=a_i&b_i`, `p_i=a_i^b_i`, prefix, `sum_i=p_i^c_i`; `ULT` = not carry-out |
+| `reduce_or`/`reduce_and` | linear chain | binary tree, `ceil(log2 n)` levels |
+| `validate`/`require_value`/`require_zero` | AND/OR chain | tree; replace "high bits are zero" with one magnitude check (`addr < limit` via a subtract borrow) where possible (21 sites) |
+| `sll`/`srl`/`sra` | - | keep the 5-stage barrel shifter |
+| `dispatch`/`branch`/`jump` | same-layer link patch | `FieldPatch` on the link source, with `+2` headroom |
+| constant-index reads | patch | set `src` statically, no patch, no `+2` |
+
+**Format.**
+- Match the new engine exactly by choosing `-s` with `a = 24` (for example
+  `-s 16777212`): `z = 23`, `isz = 71`, identical to the old `INSN_BITS`. Do
+  **not** use exactly `2^24` (that yields `a = 25`).
+- Loading: the seed loads only `proc_n * isz` bits. A full image needs the
+  loader — the host insert primitive (§8.2) or the in-space seed loader
+  (§8.9.2). Provide one before end-to-end runs; primitive-level tests can use
+  small images that fit the seed.
+
+**Budget and the `proc_n` lever.**
+- `budget = (memory_bit - code_base) / layer_bits` = 447 at 2 MiB.
+- If `layers > budget`: raise the space (up to 256 MiB is supported) or raise
+  `proc_n` (wider layers, fewer links); choose by `layers * layer_bits`.
+
+**Validation.**
+1. Unit: for every generated image assert per-layer pairwise disjointness of
+   all half-intervals; simulate the schedule in a Python model of the new
+   tick and compare each primitive with the old result.
+2. Differential: regenerate the `tests/test_rv32i.py` corpus, run on the new
+   emulator (after the loader), compare state frames and guest memory with
+   `rv32i_reference.execute`; keep the coverage and tick-budget checks.
+
+**Risks.**
+- `+2` headroom and level overflow force padding layers; watch `layers`.
+- Preserving the emission order is safe but not minimal; a later
+  list-scheduling pass can compact it.
+- Self-modifying guest code and loops: patches live in static layer homes;
+  verify with the `self-modifying-guest` case.
+
+**Files.** Generator: `copy-space/modules/rv32i.py` (frontend + primitives)
+plus a new scheduler/backend module; emulator: the image-insert primitive
+(§8.2) for end-to-end runs.
+
 ## 9. Device access and debugging
 
 Principle: **the emulator is a minimal substrate.** All logic that can be
