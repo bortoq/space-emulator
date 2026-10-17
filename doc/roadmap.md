@@ -850,6 +850,109 @@ returns the target's home, `H_target.level + target.slot*isz + offset`
 plus a new scheduler/backend module; emulator: the image-insert primitive
 (§8.2) for end-to-end runs.
 
+#### 8.10.2 Dataflow backend: SSA IR, scheduler, allocator (decision, supersedes the §8.10.1 ASAP)
+
+Status: **decided** (architect), not yet implemented. Supersedes the
+emission-order ASAP level assignment of §8.10.1.
+
+Why. The first milestone reproduces the old results but is ~15x deeper than
+the old generator: the base profile is `layers = 1059` against 86 in the old
+`Image`, with `median 2` / `max 221` copies per layer and 270 empty layers.
+The cost is not the primitive depth (the Kogge-Stone adder and the reduction
+trees are logarithmic): it is the level assignment. §8.10.1 assigns levels in
+emission order with monotone `avail[pos]` counters, so every reuse of a named
+scratch position (`TEMP`, `PB_*`, `TREE`, `IR`) creates a false WAR/WAW edge
+and adds a tick. The DAG is deeper than `proc_n` can pack; the schedule is
+depth-bound, not capacity-bound.
+
+Consequence (binding). A post-hoc schedule optimizer over the current IR is
+**rejected**: the IR carries no value identity, so the false dependences are
+structural, not an ordering artefact, and cannot be removed without recovering
+SSA — which is this rewrite. Emulator micro-optimisations (active-slot set,
+decoded-instruction cache) are **rejected as the primary lever**: they add a
+cache-invalidation invariant the model does not need and yield at most a
+constant factor. The tick model (§8) is **unchanged**; the old generator
+proves 86 layers is reachable under it.
+
+Goals (acceptance).
+1. base profile `layers <= 150`; io profile `layers <= 220`;
+2. `examples/rv32i/sum.c` `<= 5000` ticks on the new emulator;
+3. pForth `1 2 + .` `< 1 s`; copy-c `sum.c` `< 3 min` on the new emulator;
+4. `tests/test_rv32i_bulk.py` (94) and `tests/test_rv32i_bulk_io.py` (12)
+   stay green; `tests/test_new_emulator_toolchain.py` green;
+5. byte-identical image on regeneration (deterministic).
+
+**Interfaces.**
+
+Value IR (new module `copy-space/modules/rv32i_dataflow.py`):
+- `ValueId` — integer, single assignment.
+- `Value = Op(kind, inputs: tuple[ValueId, ...], width: int)`; `kind` is a
+  pure bit operation (`copy`, `and`, `or`, `xor`, `not`, `mux`, `const`) or a
+  structured primitive; exactly one writer by construction.
+- `Phi(slot, incoming)` — a loop-carried value; `slot` is a fixed
+  architectural position (an RV32I register, `PC`, `STATUS`,
+  `guest_memory_bit`).
+- `Effect` — a node with ordering edges (guest-memory load/store, channel
+  `copy`, `FSTAT` request/answer); ordered by a program-order token.
+- `ReadPos(pos, width)` / `WritePos(pos, width)` — the only nodes that
+  address fixed space positions; all other nodes are position-free.
+
+Scheduler contract:
+- input: the `Phi`-closed loop-body DAG (one iteration) and `proc_n`;
+- output: `level[ValueId]` and `depth = max(level) + 1`;
+- priority = remaining critical path to the terminator, tie-break by
+  `ValueId` (deterministic); capacity `proc_n - 1` values per layer;
+- `Phi` values pinned at the loop header so the back-edge spans exactly
+  `depth` layers; loop-carried values are read at level 0 and written before
+  the back-edge;
+- invariant S1: no copy in a layer reads a position written by the same layer;
+  invariant S2: patch distance `>= 2` (P1/P2 of §8.10.1);
+- post: `depth` is reported together with the critical-path lower bound.
+
+Allocator contract:
+- input: `Value` live ranges `[level, last_use_level]`;
+- output: `interval[ValueId]` = a bit interval in the scratch region;
+- linear scan; non-overlapping live ranges may share an interval; prefer fewer
+  conflicts over fewer intervals (space is plentiful);
+- fixed positions are never allocated: `REGS`, `PC`, `STATUS`, `EXIT_CODE`,
+  `guest_memory_bit`, and the io request/answer frame (the `SYS` record);
+- invariant A1: two values live at the same level never share a bit;
+- invariant A2: the image stays inside `[code_base, memory_bit)`.
+
+Emitter:
+- frontend `emit`/`gate`/`add`/`reduce_or`/`validate`/`guard`/`dispatch`/
+  `branch`/`jump` keep their signatures but build `Value` nodes; `_level`
+  (`avail_read`/`avail_write`) is removed;
+- `FieldPatch` on the link source keeps the `+2` distance (§8.10.1);
+- the backend resolves positions after allocation, packs layers and writes the
+  same manifest keys (`layers`, `layer_count`, `code_end_bit`,
+  `instruction_bits`, `guest_memory_bit`, ...).
+
+Data flow:
+
+    algorithm (unchanged) -> Value DAG (SSA) -> schedule -> allocate -> pack+encode
+
+**Plan (Coder task).**
+1. `tests/test_rv32i_bulk_schedule.py`: add depth, determinism and capacity
+   invariants on the current image (baseline `layers = 1059`).
+2. Module `rv32i_dataflow.py`: `Value`/`Op`/`Phi`/`Effect`, `schedule()`,
+   `allocate()`; unit tests on small DAGs (depth equals the critical path).
+3. Port the primitives (`add`, `_tree`, `validate`, `guard`, the io block) to
+   the Value API; keep semantics.
+4. Replace `_level` in `BulkImage`; re-run the 94 + 12 differential cases.
+5. Phase gate: base `layers <= 150`; else raise `proc_n` (256 -> 512) before
+   widening the space; report both.
+6. Re-run `tests/test_new_emulator_toolchain.py` and the copy-c build.
+
+**Risks.**
+- Loops with `Phi`: a wrongly pinned loop-carried value lengthens `depth` by a
+  whole iteration; test the `self-modifying-guest` and loop cases.
+- Effect ordering: memory/channel effects must not be reordered across a tick;
+  keep the program-order token.
+- Image size: fewer layers shrink the image; ensure `code_end_bit` still fits
+  `memory_bit`.
+
+
 ## 9. Device access and debugging
 
 Principle: **the emulator is a minimal substrate.** All logic that can be
