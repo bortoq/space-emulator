@@ -24,3 +24,11 @@ echo "ok: read status size above 255 (00 1A 40)"
 # write failure: /dev/full (ENOSPC) runs without crash and without hang
 { printf '\230\300\010\306\004\170\000\000\000\000\000\000\000'; printf 'Q'; } | timeout 5 ./space -s 392 -p 4 -t 3 > /dev/full 2>/dev/null || true
 echo "ok: write to /dev/full runs without crash"
+# sub-byte output: a partial last byte is written zero padded (channel_flush).
+# -s 392 -p 4 (read status 17, write status 16). Program: (22,104,DATA)
+# input 5 bits, (5,200,104) copy, (21,DATA,200) output 5 bits, NOP.
+# Stream high 5 bits 01011 -> one byte 0x58 (01011 000).
+{ printf '\150\026\010\350\004\302\312\201\030\230\000\000\000\130'; } | timeout 5 ./space -s 392 -p 4 -t 2 > /tmp/ch_flush.out
+printf '\130' > /tmp/ch_flush_expected.out
+cmp /tmp/ch_flush.out /tmp/ch_flush_expected.out
+echo "ok: sub-byte output zero padded (5 bits -> 0x58)"

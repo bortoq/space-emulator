@@ -20,6 +20,9 @@ echo "== transfer status =="
 echo "== channel bit transfers =="
 ./tests/channels.sh
 
+echo "== wide instruction format =="
+./tests/wide.sh
+
 echo "== scatter/gather roundtrip =="
 ./tests/scatter.sh
 

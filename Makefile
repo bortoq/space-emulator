@@ -1,4 +1,6 @@
-CC      ?= gcc
+ifeq ($(origin CC),default)
+CC      := gcc
+endif
 CFLAGS  ?= -std=c11 -Wall -Wextra -O3 -flto
 COMMON  = globals.c bitcopy.c
 ENGINE  = engine.c config.c $(COMMON)

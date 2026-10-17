@@ -70,7 +70,8 @@ data bits the transfer moved. The end bit is one when the input has
 ended. errno is zero without a failure and the operation error number
 otherwise. The status number fields take their low bit first. An
 incomplete transfer fills the data bits it got and leaves the rest.
-The program keeps `n` above `Sr` for input and above `Sw` for output.
+The program keeps `n` at least `Sr` for input and at least `Sw` for
+output.
 
 Channel copies are normal processor instructions. They run in order
 inside the tick. Stream bits go on from one access to the next. The
@@ -94,6 +95,9 @@ puts data there with ordinary copies and through the channel.
    to copy the right strings from the table to the right positions.
 
 ## 3. Build and run
+
+Needs a GCC/Clang-compatible compiler (`unsigned __int128` is used for
+wide instruction formats).
 
 ```sh
 make                # space

@@ -7,6 +7,12 @@ tests (`make check`), ASan+UBSan (`detect_leaks=1`), differential fuzzing
 against an independent reference model, brute force over configuration
 bounds, reproduction of the previous audit findings.
 
+> **Historical record.** Sections 1-7 below describe revision
+> `6258659` (and its predecessor `5771925`); that text, its
+> `tests/guards.sh` reference and its line numbers are kept for the
+> record only (guard branches were removed in `5771925`). The current
+> state of the tree is audited in section 8.
+
 ## 1. Result
 
 Verdict: **[APPROVED]** (no critical or blocking issues).
@@ -107,3 +113,66 @@ is faster, smaller, and safer. The replacement was rolled back and the tree
 is back at `5771925`. Note on §3: the overlap/`memcpy` note still applies to
 both implementations (both call `memcpy` in the aligned middle); the
 replacement neither removed nor worsened it.
+
+## 8. Full audit (code + docs + tests)
+
+Date: 2026-10-17. Revision under test: working tree on top of `b7e5c30`
+(caps removal, tick acceleration: SWAR rev-fetch 64/128-bit, NOP early
+return, bulk channel I/O, build `-O3 -flto`). Role: Auditor.
+
+### 8.1 Result
+
+Verdict: **[APPROVED]** (no critical or blocking defects; two non-blocking
+test/documentation gaps, see 8.4). Scope: all sources (engine.c, bitcopy.c,
+config.c, globals.c, space.c, space.h), README.md, readme.ru.md, audit.md,
+Makefile, tests/*.sh.
+
+### 8.2 Evidence
+
+- `make` — no warnings; strict `-Wpedantic -Wshadow -Wcast-qual
+  -Wstrict-prototypes -Wmissing-prototypes` — only the expected notes on
+  `unsigned __int128` (GCC/Clang extension, see 8.3). `make check` — 31
+  checks green (boot/stop/status/channels/scatter 5x random seed/cfg).
+- ASan+UBSan on the whole channel/status set and 300-program differential
+  fuzz — clean; exit codes on boundaries: bad flags → 2, memory → 1,
+  success → 0 (`-s 2^63`, `-s/-p 0`, `-t` overflow, `-t ULLONG_MAX`).
+- Wide fetch branch (`fetch_instruction_rev128`, isz 58..120): 16-bit
+  roundtick at `-s 550000/600000/1000000/2000000` — data integrity OK
+  (ad hoc; not in the repository suite, see 8.4).
+- Flush zero-padding: manual 5-bit transfer → output `0x58` (5 data bits
+  + zero padding) — OK (ad hoc; not in the repository suite, see 8.4).
+- Perf (this session cumulative, medians): A(fetch,NOP) 1.59x,
+  B(exec) 1.19x, C(697 instr) 1.25x, E(channels) 11.8x, F(wide) 4.26x,
+  G(bulk shift) 1.07x.
+
+### 8.3 Findings
+
+| Code block | Type | Description | How to fix |
+|------------|------|-------------|------------|
+| `audit.md` §2–§7 | Warning (doc) | The audit text describes revision `6258659` and references `tests/guards.sh` — the file was removed together with its guard branches (commit `5771925`, trust refactor), and line numbers/flags are outdated (`-O2` vs `-O3 -flto`). A reader mistakes the history for the current state. | Mark §1–§7 as historical (revision hashes), or refresh the numbers; keep §8 as current. |
+| `tests/` | Opt (test gaps) | 1) The wide rev128 datapath has only a boot-only case in `cfg.sh` (`-s 1000000`), no data roundtrip. 2) `channel_flush` zero padding of a partial last byte is never exercised end-to-end. Both paths were verified manually in this audit (8.2). | Add: a wide roundtrip (`-s 1000000`, in→copy→out, expect `5A 5A`) and a sub-byte flush transfer (5 bits → `58`). |
+| `README.md` §"Channels" | Opt (doc) | "The program keeps `n` above `Sr`" — the precise contract is `n >= Sr` (`n == Sr` is a valid zero-data status-only transfer). | Reword to "at least". |
+| `Makefile`, engine.c | Opt (doc/portability) | `CC ?= gcc` is a no-op (make predefines `CC=cc`); the build needs a GCC/Clang-compatible compiler because of `unsigned __int128`. | Note in README "requires gcc/clang"; drop `?=` or use `CC := gcc`. |
+| `engine.c` per-bit path | Note | `fetch_instruction_at` (isz > 120, s >= 2^41 bits = 256 GiB) is unreachable at real memory sizes; kept as fallback. Same for `get_argument` n > 64 truncation. | Leave; optionally note in comments. |
+| `bitcopy.c` aligned memcpy | Note | Overlapping half-intervals remain UB per trust boundary (documented in README/space.h since `5771925`). Ours is a deliberate, documented boundary. | Keep. |
+
+### 8.4 Scores
+
+| Area | Score | Notes |
+|------|-------|-------|
+| Memory safety | 10/10 | malloc/free balanced, no leaks (LeakSanitizer), no UAF, overflow-safe allocations; buffers exactly bounded (4096 B chunks; SWAR guards `+8/+16 <= nbytes`). |
+| Security / trust | 9/10 | Trust boundary uniform and documented in space.h/engine.c/README; error paths capture errno at the failing call; exit codes 0/1/2 correct on all boundaries tested. |
+| Complexity / perf | 9/10 | All ops O(n) with byte-level fast paths; no per-bit loops in the hot paths; fetch latency-optimized (SWAR), channels bulk (11.8x). Remaining reserve: bitcpy shifted-middle loop only. |
+| Readability | 9/10 | Uniform naming/style, explanatory comments, single-definition header, -Wall -Wextra clean. |
+| Tests | 8/10 | 31 end-to-end checks + differential fuzz (300/40/120 programs) + ASan/UBSan; gaps: wide datapath roundtrip and sub-byte flush (both verified ad hoc in 8.2). |
+| Docs consistency | 8/10 | README matches behavior spot-checked on all formulas/limits (a, 3a-1, fit relations, -p 697, -s 27, status layouts, ZZ examples); stale audit.md sections 1-7 and missing doc/roadmap.md lower the score. |
+
+### 8.5 Conclusion
+
+The implementation matches README; formulas, limits and the trust
+boundary are consistent across space.h, engine.c, bitcopy.c, README and
+the test expectations. No open critical defects. The two ad-hoc checks
+(wide roundtrip, flush padding) are worth moving into the suite:
+they close the only two paths without an in-repo end-to-end test.
+
+**Verdict: [APPROVED].**
