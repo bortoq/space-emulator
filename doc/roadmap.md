@@ -850,107 +850,67 @@ returns the target's home, `H_target.level + target.slot*isz + offset`
 plus a new scheduler/backend module; emulator: the image-insert primitive
 (§8.2) for end-to-end runs.
 
-#### 8.10.2 Dataflow backend: SSA IR, scheduler, allocator (decision, supersedes the §8.10.1 ASAP)
+#### 8.10.2 Dataflow backend: refuted by measurement (superseded)
 
-Status: **decided** (architect), not yet implemented. Supersedes the
-emission-order ASAP level assignment of §8.10.1.
+Status: **refuted**. This was the first draft of this section; measurement
+(2026-10-18, base profile, 8 MiB) shows the proposed SSA rework would not
+help. Kept as a record of the negative result.
 
-Why. The first milestone reproduces the old results but is ~15x deeper than
-the old generator: the base profile is `layers = 1059` against 86 in the old
-`Image`, with `median 2` / `max 221` copies per layer and 270 empty layers.
-The cost is not the primitive depth (the Kogge-Stone adder and the reduction
-trees are logarithmic): it is the level assignment. §8.10.1 assigns levels in
-emission order with monotone `avail[pos]` counters, so every reuse of a named
-scratch position (`TEMP`, `PB_*`, `TREE`, `IR`) creates a false WAR/WAW edge
-and adds a tick. The DAG is deeper than `proc_n` can pack; the schedule is
-depth-bound, not capacity-bound.
+First-draft decision (withdrawn): rework the generator IR to explicit
+dataflow (SSA `Value`s, loop-carried `Phi`, ordered `Effect`s) with a global
+scheduler and a position allocator, replacing the emission-order ASAP of
+§8.10.1.
 
-Consequence (binding). A post-hoc schedule optimizer over the current IR is
-**rejected**: the IR carries no value identity, so the false dependences are
-structural, not an ordering artefact, and cannot be removed without recovering
-SSA — which is this rewrite. Emulator micro-optimisations (active-slot set,
-decoded-instruction cache) are **rejected as the primary lever**: they add a
-cache-invalidation invariant the model does not need and yield at most a
-constant factor. The tick model (§8) is **unchanged**; the old generator
-proves 86 layers is reachable under it.
+Refutation (`BulkImage(memory_bytes=65536, layout=8 MiB)`):
+- the blocks are already packed densely: the base image is 76 blocks,
+  `sum(depth) = 1059`; the deepest blocks carry ~1500-1777 copies in 35-59
+  layers (~43 copies/layer);
+- a full SSA renaming of the integer positions leaves the depth essentially
+  unchanged: `1059 -> 1089` (0.97x). There is **no WAR/WAW slack**: every
+  shared position is written once per value and read through a genuine RAW
+  or patch edge;
+- the per-guest-instruction execution path (max `fetch -> ... -> fetch`
+  cycle; worst case a taken branch) is 188 layers; a simple ALU operation is
+  about 55 (`fetch` 13 + body 35 + writeback/commit/checkpoint 7);
+- the patch discipline contributes only ~2.3x: emulating a gate latency of
+  0 (same-layer patch, forbidden by the new tick) gives 459 layers, not 86.
 
-Goals (acceptance).
-1. base profile `layers <= 150`; io profile `layers <= 220`;
-2. `examples/rv32i/sum.c` `<= 5000` ticks on the new emulator;
-3. pForth `1 2 + .` `< 1 s`; copy-c `sum.c` `< 3 min` on the new emulator;
-4. `tests/test_rv32i_bulk.py` (94) and `tests/test_rv32i_bulk_io.py` (12)
-   stay green; `tests/test_new_emulator_toolchain.py` green;
-5. byte-identical image on regeneration (deterministic).
+Conclusion. The schedule is near its critical path; the depth is
+structural, not a scheduling artefact. The scheduler/allocator rework is
+**not** on the critical path and must not be implemented.
 
-**Interfaces.**
+#### 8.10.3 The real cost: tick-explicit gate latency, and the model choice
 
-Value IR (new module `copy-space/modules/rv32i_dataflow.py`):
-- `ValueId` — integer, single assignment.
-- `Value = Op(kind, inputs: tuple[ValueId, ...], width: int)`; `kind` is a
-  pure bit operation (`copy`, `and`, `or`, `xor`, `not`, `mux`, `const`) or a
-  structured primitive; exactly one writer by construction.
-- `Phi(slot, incoming)` — a loop-carried value; `slot` is a fixed
-  architectural position (an RV32I register, `PC`, `STATUS`,
-  `guest_memory_bit`).
-- `Effect` — a node with ordering edges (guest-memory load/store, channel
-  `copy`, `FSTAT` request/answer); ordered by a program-order token.
-- `ReadPos(pos, width)` / `WritePos(pos, width)` — the only nodes that
-  address fixed space positions; all other nodes are position-free.
+The 1059 layers (vs the old `Image`'s 86) are the honest price of the new
+tick. The old generator took its depth from **same-tick visibility**: the
+adder carry of bit `i` read at bit `i+1` in the same tick, a gate's `src`
+patched and read in the same layer, the next layer resolved from fields
+patched in the same layer (see the §8.10 intro). The new tick forbids all
+three, so every gate becomes patch (1 tick) -> rule P1 `+2` -> read, about
+3 ticks, and every validate/branch chain inherits that. The new core is
+already *faster per tick* than the old (355k vs 217k ticks/s), so the ~15x
+gap is entirely tick count.
 
-Scheduler contract:
-- input: the `Phi`-closed loop-body DAG (one iteration) and `proc_n`;
-- output: `level[ValueId]` and `depth = max(level) + 1`;
-- priority = remaining critical path to the terminator, tie-break by
-  `ValueId` (deterministic); capacity `proc_n - 1` values per layer;
-- `Phi` values pinned at the loop header so the back-edge spans exactly
-  `depth` layers; loop-carried values are read at level 0 and written before
-  the back-edge;
-- invariant S1: no copy in a layer reads a position written by the same layer;
-  invariant S2: patch distance `>= 2` (P1/P2 of §8.10.1);
-- post: `depth` is reported together with the critical-path lower bound.
+Levers, by cost.
+1. **Emulator inner loop (constant factor, no model change).** Cannot answer
+   a 15x tick-count gap; bounds at a small constant.
+2. **Cut the patch latency (model-level, up to ~2.3x).** P1 (a patch at `L`
+   is safe because the link at `M-1` reads `H_M`, so `M >= L+2`) is a
+   property of the **link mechanism** rewriting the next layer's home. A
+   link that does not rewrite the target's home (static homes, a patched
+   entry only) would cut gate latency toward 1-2 ticks. This changes the
+   link/§8 model, not the generator.
+3. **Restore controlled same-tick visibility (model change).** The only
+   route to the old ~86: a **dataflow/fixpoint tick** that advances ready
+   copies to quiescence inside one tick, with the observable boundary
+   (channels, `--dump-space`, the trace) as the only forced tick edge — the
+   copying semantics the old core used, made explicit and deterministic. It
+   changes §8.3.1 (the tick contract) and §8.10, so it is a Supervisor
+   decision.
 
-Allocator contract:
-- input: `Value` live ranges `[level, last_use_level]`;
-- output: `interval[ValueId]` = a bit interval in the scratch region;
-- linear scan; non-overlapping live ranges may share an interval; prefer fewer
-  conflicts over fewer intervals (space is plentiful);
-- fixed positions are never allocated: `REGS`, `PC`, `STATUS`, `EXIT_CODE`,
-  `guest_memory_bit`, and the io request/answer frame (the `SYS` record);
-- invariant A1: two values live at the same level never share a bit;
-- invariant A2: the image stays inside `[code_base, memory_bit)`.
-
-Emitter:
-- frontend `emit`/`gate`/`add`/`reduce_or`/`validate`/`guard`/`dispatch`/
-  `branch`/`jump` keep their signatures but build `Value` nodes; `_level`
-  (`avail_read`/`avail_write`) is removed;
-- `FieldPatch` on the link source keeps the `+2` distance (§8.10.1);
-- the backend resolves positions after allocation, packs layers and writes the
-  same manifest keys (`layers`, `layer_count`, `code_end_bit`,
-  `instruction_bits`, `guest_memory_bit`, ...).
-
-Data flow:
-
-    algorithm (unchanged) -> Value DAG (SSA) -> schedule -> allocate -> pack+encode
-
-**Plan (Coder task).**
-1. `tests/test_rv32i_bulk_schedule.py`: add depth, determinism and capacity
-   invariants on the current image (baseline `layers = 1059`).
-2. Module `rv32i_dataflow.py`: `Value`/`Op`/`Phi`/`Effect`, `schedule()`,
-   `allocate()`; unit tests on small DAGs (depth equals the critical path).
-3. Port the primitives (`add`, `_tree`, `validate`, `guard`, the io block) to
-   the Value API; keep semantics.
-4. Replace `_level` in `BulkImage`; re-run the 94 + 12 differential cases.
-5. Phase gate: base `layers <= 150`; else raise `proc_n` (256 -> 512) before
-   widening the space; report both.
-6. Re-run `tests/test_new_emulator_toolchain.py` and the copy-c build.
-
-**Risks.**
-- Loops with `Phi`: a wrongly pinned loop-carried value lengthens `depth` by a
-  whole iteration; test the `self-modifying-guest` and loop cases.
-- Effect ordering: memory/channel effects must not be reordered across a tick;
-  keep the program-order token.
-- Image size: fewer layers shrink the image; ensure `code_end_bit` still fits
-  `memory_bit`.
+Recommendation. Do **not** schedule; decide the tick contract. If the old
+performance is required, choose lever 3; lever 2 is the smaller step if a
+partial recovery suffices.
 
 
 ## 9. Device access and debugging
